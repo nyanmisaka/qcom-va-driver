@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 // Hardware integration: scalar reference, PRIME2 identity and DMA-BUF lifetime.
+// Pass cdsp or vulkan to select a backend; --bench runs warmed VAAPI timings.
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_drmcommon.h>
 #include <va/va_vpp.h>
 #include <drm_fourcc.h>
 #include "../../src/cdsp/filter.h"
+#ifndef VPP_NO_CDSP
 #include "../../src/cdsp/client.h"
+#endif
 #include <linux/dma-heap.h>
 #include <linux/dma-buf.h>
+#ifndef VPP_NO_CDSP
 #include <misc/fastrpc.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -23,13 +28,33 @@
 #include <cstring>
 #include <algorithm>
 #include <vector>
+#include <chrono>
+#include <vulkan/vulkan.h>
 
 static int input_fd = -1, output_fd = -1, direct_calls = 0;
 static int maps = 0, unmaps = 0;
+static bool gpu = false, benchmark = false;
+static unsigned imports = 0;
+static bool saw_input = false, saw_output = false;
 static bool same_buffer(int a, int b) {
     struct stat x{}, y{};
     return a >= 0 && b >= 0 && !fstat(a, &x) && !fstat(b, &y) && x.st_dev == y.st_dev &&
            x.st_ino == y.st_ino;
+}
+extern "C" VkResult vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo *info,
+                                     const VkAllocationCallbacks *callbacks,
+                                     VkDeviceMemory *memory) {
+    static auto real = reinterpret_cast<PFN_vkAllocateMemory>(dlsym(RTLD_NEXT, "vkAllocateMemory"));
+    for (auto next = static_cast<const VkBaseInStructure *>(info->pNext); next; next = next->pNext)
+        if (next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR) {
+            auto fd = reinterpret_cast<const VkImportMemoryFdInfoKHR *>(next);
+            if (fd->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+                ++imports;
+                saw_input |= same_buffer(fd->fd, input_fd);
+                saw_output |= same_buffer(fd->fd, output_fd);
+            }
+        }
+    return real(device, info, callbacks, memory);
 }
 extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
     va_list args;
@@ -39,6 +64,7 @@ extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
     static auto real =
         reinterpret_cast<int (*)(int, unsigned long, ...)>(dlsym(RTLD_NEXT, "ioctl"));
     bool both = false;
+#ifndef VPP_NO_CDSP
     if (request == FASTRPC_IOCTL_INVOKE && arg) {
         auto *call = static_cast<fastrpc_invoke *>(arg);
         auto *buffers = reinterpret_cast<fastrpc_invoke_args *>(call->args);
@@ -51,11 +77,14 @@ extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
         }
         both = in && out;
     }
+#endif
     int result = real(fd, request, arg);
+#ifndef VPP_NO_CDSP
     if (!result && request == FASTRPC_IOCTL_MEM_MAP)
         ++maps;
     if (!result && request == FASTRPC_IOCTL_MEM_UNMAP)
         ++unmaps;
+#endif
     if (!result && both)
         ++direct_calls;
     return result;
@@ -277,6 +306,8 @@ static void run_case(Case c) {
         display, c.dst_format == VA_FOURCC_P010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420,
         c.dw, c.dh, &outputs[1], 2, nullptr, 0));
     int initial_maps = maps, initial_unmaps = unmaps;
+    unsigned initial_imports = imports;
+    saw_input = false;
     for (unsigned kind = 0; kind < 3; ++kind) {
         VADRMPRIMESurfaceDescriptor exported{};
         // kind 0: external heap; kind 1: pre-exported MSM; kind 2: lazy VPP heap.
@@ -289,6 +320,7 @@ static void run_case(Case c) {
             output_fd = -1;
         input_fd = input.desc.objects[0].fd;
         direct_calls = 0;
+        saw_output = false;
         for (int repeat = 0; repeat < 3; ++repeat) {
             VAProcPipelineParameterBuffer params{};
             params.surface = in;
@@ -309,10 +341,52 @@ static void run_case(Case c) {
                 output_fd = exported.objects[0].fd;
             }
         }
-        require(maps - initial_maps == int(kind) + 2, "one persistent map per source/destination");
-        require(unmaps == initial_unmaps, "maps survive across frames");
-        require(direct_calls == (kind == 2 ? 2 : 3),
-                "both original DMA-BUFs must reach successful FastRPC calls");
+        if (gpu) {
+            require(imports - initial_imports == kind + 2, "persistent Vulkan imports");
+            require(saw_input && (kind == 2 || saw_output), "original DMA-BUFs reach Vulkan");
+            require(maps == initial_maps && !direct_calls, "Vulkan processing does not call DSP");
+        } else {
+            require(maps - initial_maps == int(kind) + 2,
+                    "one persistent map per source/destination");
+            require(unmaps == initial_unmaps, "maps survive across frames");
+            require(direct_calls == (kind == 2 ? 2 : 3),
+                    "both original DMA-BUFs must reach successful FastRPC calls");
+        }
+        if (benchmark && kind == 0) {
+            VAProcPipelineParameterBuffer params{};
+            params.surface = in;
+            params.surface_region = &region;
+            params.rotation_state = c.rotation;
+            VABufferID buffer;
+            va(vaCreateBuffer(display, context, VAProcPipelineParameterBufferType, sizeof(params),
+                              1, &params, &buffer));
+            auto submit = [&] {
+                va(vaBeginPicture(display, context, outputs[0]));
+                va(vaRenderPicture(display, context, &buffer, 1));
+                va(vaEndPicture(display, context));
+                va(vaSyncSurface(display, outputs[0]));
+            };
+            auto warm = std::chrono::steady_clock::now();
+            do {
+                submit();
+            } while (
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - warm).count() < 1);
+            std::vector<double> times;
+            for (int i = 0; i < 100; ++i) {
+                auto begin = std::chrono::steady_clock::now();
+                submit();
+                times.push_back(std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - begin)
+                                    .count());
+            }
+            std::sort(times.begin(), times.end());
+            std::printf(
+                "BENCH %s %s->%s %ux%u->%ux%u crop=%d rotation=%u median=%.3f ms p95=%.3f ms\n",
+                gpu ? "vulkan" : "cdsp", c.src_format == VA_FOURCC_P010 ? "P010" : "NV12",
+                c.dst_format == VA_FOURCC_P010 ? "P010" : "NV12", c.sw, c.sh, c.dw, c.dh, c.crop,
+                c.rotation * 90, times[50], times[95]);
+            va(vaDestroyBuffer(display, buffer));
+        }
         VAImage image{};
         va(vaDeriveImage(display, outputs[kind], &image));
         void *mapped;
@@ -346,7 +420,7 @@ static void run_case(Case c) {
             c.dst_format == VA_FOURCC_P010 ? "P010" : "NV12", c.sw, c.sh, c.dw, c.dh, c.crop,
             c.rotation * 90, kind, direct_calls, maxdiff[0], maxdiff[1]);
         require(maxdiff[0] <= unsigned(wide ? 0 : 1) && maxdiff[1] <= unsigned(wide ? 0 : 1),
-                "DSP matches CPU reference within rounding tolerance");
+                "VPP matches CPU reference within rounding tolerance");
         close(exported.objects[0].fd);
     }
     // Unsupported operations must fail before a DSP invocation.
@@ -376,7 +450,8 @@ static void run_case(Case c) {
     va(vaDestroyBuffer(display, buffer));
     va(vaDestroySurfaces(display, &alias, 1));
     va(vaDestroyContext(display, context));
-    require(unmaps - initial_unmaps == 4, "last context retires all persistent maps");
+    if (!gpu)
+        require(unmaps - initial_unmaps == 4, "last context retires all persistent maps");
     // Surfaces outlive the last context, then get mapped into a new session.
     va(vaCreateContext(display, config, 0, 0, 0, nullptr, 0, &context));
     VAProcPipelineParameterBuffer again{};
@@ -389,15 +464,20 @@ static void run_case(Case c) {
     va(vaRenderPicture(display, context, &buffer, 1));
     va(vaEndPicture(display, context));
     va(vaDestroyBuffer(display, buffer));
-    require(maps - initial_maps == 6, "retained buffers remap into a new context");
+    if (gpu)
+        require(imports - initial_imports == 4, "imports outlive their VA context");
+    else
+        require(maps - initial_maps == 6, "retained buffers remap into a new context");
     va(vaDestroyContext(display, context));
-    require(unmaps - initial_unmaps == 6, "recreated context cleans up maps");
+    if (!gpu)
+        require(unmaps - initial_unmaps == 6, "recreated context cleans up maps");
     va(vaDestroySurfaces(display, &in, 1));
     va(vaDestroySurfaces(display, outputs, 3));
     va(vaDestroyConfig(display, config));
     va(vaTerminate(display));
     close(drm);
 }
+#ifndef VPP_NO_CDSP
 static cdsp_vpp_buffer *import_test_buffer(size_t size) {
     int heap = open("/dev/dma_heap/system", O_RDONLY | O_CLOEXEC);
     require(heap >= 0, "heap open");
@@ -633,7 +713,24 @@ static void check_transform_boundaries() {
          "HVX/all HVX)");
 }
 
-int main() {
+#endif
+int main(int argc, char **argv) {
+#ifdef VPP_NO_CDSP
+    gpu = true;
+#endif
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--bench"))
+            benchmark = true;
+        else {
+            require(!std::strcmp(argv[i], "cdsp") || !std::strcmp(argv[i], "vulkan"),
+                    "backend argument");
+            gpu = !std::strcmp(argv[i], "vulkan");
+        }
+    }
+#ifdef VPP_NO_CDSP
+    require(gpu, "CDSP tests were disabled at build time");
+#endif
+    setenv("IRIS_VAAPI_VPP", gpu ? "vulkan" : "cdsp", 1);
     std::vector<Case> cases = {{1920, 1080, 3840, 2160, false},
                                {1920, 1080, 1280, 720, false},
                                {1280, 720, 1920, 1080, false},
@@ -704,6 +801,21 @@ int main() {
             cases.push_back({64, 128, 128, 64, false, sf, df, VA_ROTATION_90, true});
             cases.push_back({64, 128, 128, 64, false, sf, df, VA_ROTATION_270, true});
         }
+    if (benchmark) {
+        cases = {{1920, 1080, 3840, 2160, false},
+                 {3840, 2160, 1920, 1080, false},
+                 {1920, 1080, 1280, 720, false},
+                 {1280, 720, 1920, 1080, false},
+                 {3840, 2160, 3840, 2160, false},
+                 {3840, 2160, 3840, 2160, false, VA_FOURCC_NV12, VA_FOURCC_P010},
+                 {3840, 2160, 3840, 2160, false, VA_FOURCC_P010, VA_FOURCC_NV12},
+                 {1920, 1080, 3840, 2160, false, VA_FOURCC_P010, VA_FOURCC_P010},
+                 {3840, 2160, 2160, 3840, false, VA_FOURCC_NV12, VA_FOURCC_NV12, VA_ROTATION_90},
+                 {3840, 2160, 2160, 3840, false, VA_FOURCC_P010, VA_FOURCC_P010, VA_ROTATION_90},
+                 {1920, 1080, 2160, 3840, false, VA_FOURCC_NV12, VA_FOURCC_P010, VA_ROTATION_270},
+                 {640, 384, 608, 360, true},
+                 {640, 400, 32, 20, false}};
+    }
     // FastRPC owns threads and process-global state. Never fork a process
     // that has already initialized them: each case starts in a fresh child.
     for (auto c : cases) {
@@ -716,8 +828,12 @@ int main() {
         int status;
         require(waitpid(child, &status, 0) == child && status == 0, "test case child");
     }
-    check_buffer_lifetime();
-    check_transform_boundaries();
-    check_rotation_contexts();
+#ifndef VPP_NO_CDSP
+    if (!gpu && !benchmark) {
+        check_buffer_lifetime();
+        check_transform_boundaries();
+        check_rotation_contexts();
+    }
+#endif
     std::puts("PASS");
 }

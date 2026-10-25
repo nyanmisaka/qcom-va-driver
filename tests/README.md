@@ -74,8 +74,8 @@ worker limits without DSP hardware. Build with CDSP enabled, then run on the
 target (upstream FastRPC kernel ABI):
 
 ```sh
-c++ -O2 -std=c++17 tests/vpp/scaling.cpp -o build/vpp-scaling \
-  $(pkg-config --cflags --libs libva libva-drm libdrm) -ldl \
+c++ -O2 -std=c++17 -rdynamic tests/vpp/scaling.cpp -o build/vpp-scaling \
+  $(pkg-config --cflags --libs libva libva-drm libdrm vulkan) -ldl \
   -Lbuild/src/cdsp -liris_vpp
 export LIBVA_DRIVER_NAME=v4l2 LIBVA_DRIVERS_PATH="$PWD/build"
 export LD_LIBRARY_PATH="$PWD/build/src/cdsp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -86,13 +86,18 @@ export ADSP_LIBRARY_PATH="$PWD/build/src/cdsp${ADSP_LIBRARY_PATH:+;$ADSP_LIBRARY
 Checks NV12/P010 scaling, conversion and rotation, rounding, crop/output layouts,
 DMA-BUF identity, persistent mapping, context/buffer lifetime and rotation with
 five live contexts sharing scratch resources. Also run
-against a `-Dfastrpc=bundled` build.
+against a `-Dfastrpc=bundled` build. Pass `vulkan` to run the same VAAPI cases
+and check persistent Vulkan imports instead of FastRPC mappings. For a build
+without CDSP, add `-DVPP_NO_CDSP` and omit `-Lbuild/src/cdsp -liris_vpp`.
+`--bench` measures 100 synchronous submissions after a one-second warmup,
+excluding uploads and reference generation.
 
 `vpp/tonemap.cpp` checks Vulkan HDR10 → SDR against a double-precision reference,
 including metadata changes, padded/cropped layouts, DMA-BUF identity, persistent
 imports and context lifetime. Build with the command in its header and run with
 the same driver environment; `--geometry` also checks combined HDR, scaling and
-rotation with CDSP. It reports warmed VAAPI call times for 1080p and 4K.
+rotation with the selected VPP backend. It reports warmed VAAPI call times
+for 1080p and 4K.
 
 `vpp/overlay.cpp` checks both overlay backends against a double-precision
 reference, including RGB upload/PRIME round trips, clipping, scaling, alpha,

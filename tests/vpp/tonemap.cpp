@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Build: c++ -O2 -std=c++17 -rdynamic tests/vpp/tonemap.cpp -o build/vpp-tonemap \
 //   $(pkg-config --cflags --libs libva libva-drm libdrm vulkan) -ldl
-// Run with --geometry to also check combined Vulkan/CDSP processing.
+// Run with --geometry to check combined processing with the selected VPP backend.
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_drmcommon.h>
