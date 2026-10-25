@@ -515,7 +515,7 @@ void Vpp::process(const std::vector<VppPicture> &pictures, const std::shared_ptr
         else {
             check(direct && vulkan_available(), "Vulkan copy unavailable",
                   VA_STATUS_ERROR_UNIMPLEMENTED);
-            impl_->vulkan->copy(background, *target);
+            impl_->vulkan->transform(background, *target);
         }
 #endif
         return;

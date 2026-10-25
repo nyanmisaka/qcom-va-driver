@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+
+// Each invocation owns a complete 2x2 Y block and its UV pair. In particular,
+// neighboring invocations never write different bytes of the same NV12 word.
+// Specialize uniform format/rotation and tap counts so the driver can unroll
+// common 2x area and four-tap cubic kernels without per-sample branches.
+layout(constant_id=0) const int source_wide = 0;
+layout(constant_id=1) const int target_wide = 0;
+layout(constant_id=2) const int rotation = 0;
+layout(constant_id=3) const int filter_mode = 0; // copy, area, separable cubic/area
+layout(constant_id=4) const int taps_x = 0;
+layout(constant_id=5) const int taps_y = 0;
+layout(local_size_x=8, local_size_y=8) in;
+layout(set=0, binding=0, std430) readonly buffer Input { uint16_t input_data[]; };
+layout(set=0, binding=1, std430) writeonly buffer Output { uint16_t output_data[]; };
+layout(set=0, binding=3, std430) readonly buffer Filters { uint filters[]; };
+layout(set=0, binding=4, std430) buffer Scratch { int16_t scratch[]; };
+layout(push_constant, std430) uniform Parameters {
+    int src_width, src_height, scaled_width, scaled_height, width, height;
+    int src_stride, src_y, src_uv, dst_stride, dst_y, dst_uv;
+    int src_wide, dst_wide, rotation, enlarging;
+    int filter_x, filter_y, filter_uv_x, filter_uv_y;
+} p;
+
+ivec2 source_position(ivec2 output_pos, bool chroma) {
+    ivec2 size = ivec2(p.scaled_width, p.scaled_height) / (chroma ? 2 : 1);
+    if (rotation == 1) return ivec2(output_pos.y, size.y - 1 - output_pos.x);
+    if (rotation == 2) return size - 1 - output_pos;
+    if (rotation == 3) return ivec2(size.x - 1 - output_pos.y, output_pos.x);
+    return output_pos;
+}
+int load_sample(ivec2 xy, bool chroma, int channel) {
+    int x = chroma ? xy.x * 2 + channel : xy.x;
+    int offset = (chroma ? p.src_uv : p.src_y) + xy.y * p.src_stride + x * (1 + source_wide);
+    uint word = uint(input_data[offset / 2]);
+    if (source_wide != 0) return int(word >> 6);
+    return int((word >> ((offset & 1) * 8)) & 255u) << (target_wide != 0 ? 2 : 0);
+}
+int scratch_index(ivec2 xy, bool chroma, int channel) {
+    return (chroma ? p.src_width * p.scaled_height : 0) + xy.y * p.src_width +
+           (chroma ? xy.x * 2 + channel : xy.x);
+}
+// Vertical results retain Q6 precision for 8-bit cubic scaling and Q4 for
+// 10-bit processing. Their signed range fits int16, including cubic overshoot.
+int vertical(ivec2 xy, bool chroma, int channel) {
+    int fy = (chroma ? p.filter_uv_y : p.filter_y) + xy.y * 24;
+    int count = taps_y != 0 ? taps_y : int(filters[fy]);
+    int shift = int(filters[fy + 1]);
+    bool wide = (source_wide | target_wide) != 0;
+    int fraction = wide ? 4 : filter_mode == 2 ? 6 : 0;
+    int sum = 0;
+    for (int j = 0; j < count; ++j) {
+        uint tap = filters[fy + 2 + j];
+        sum += load_sample(ivec2(xy.x, tap & 65535u), chroma, channel) * (int(tap) >> 16);
+    }
+    int value = (sum + (1 << (shift - fraction - 1))) >> (shift - fraction);
+    return !wide && filter_mode != 2 ? clamp(value, 0, 255) : value;
+}
+int filtered(ivec2 xy, bool chroma, int channel) {
+    xy = source_position(xy, chroma);
+    bool wide = (source_wide | target_wide) != 0;
+    int result;
+    if (filter_mode == 0) {
+        result = load_sample(xy, chroma, channel);
+    } else {
+        // The CPU caches CDSP's quantized filters for each geometry. A tap is
+        // packed as an unsigned 16-bit index and a signed 16-bit weight.
+        int fx = (chroma ? p.filter_uv_x : p.filter_x) + xy.x * 24;
+        int nx = taps_x != 0 ? taps_x : int(filters[fx]);
+        int sx = int(filters[fx + 1]);
+        int fraction = wide ? 4 : filter_mode == 2 ? 6 : 0;
+        int sum = 0;
+        for (int i = 0; i < nx; ++i) {
+            uint tap = filters[fx + 2 + i];
+            ivec2 pos = ivec2(tap & 65535u, xy.y);
+            int value = filter_mode >= 2 ? int(scratch[scratch_index(pos, chroma, channel)])
+                                         : vertical(pos, chroma, channel);
+            sum += value * (int(tap) >> 16);
+        }
+        int shift = sx + fraction + (wide && target_wide == 0 ? 2 : 0);
+        return clamp((sum + (1 << (shift - 1))) >> shift, 0, target_wide != 0 ? 1023 : 255);
+    }
+    if (wide && target_wide == 0) result = (result + 2) >> 2;
+    return clamp(result, 0, target_wide != 0 ? 1023 : 255);
+}
+void store_pair(int offset, ivec2 value) {
+    if (target_wide != 0) {
+        output_data[offset / 2] = uint16_t(value.x << 6);
+        output_data[offset / 2 + 1] = uint16_t(value.y << 6);
+    } else {
+        output_data[offset / 2] = uint16_t(value.x | (value.y << 8));
+    }
+}
+#ifdef VERTICAL_PASS
+void main() {
+    ivec2 xy = ivec2(gl_GlobalInvocationID.xy) * 2;
+    if (xy.x >= p.src_width || xy.y >= p.scaled_height) return;
+    for (int row = 0; row < 2; ++row)
+        for (int col = 0; col < 2; ++col) {
+            ivec2 pos = xy + ivec2(col, row);
+            scratch[scratch_index(pos, false, 0)] = int16_t(vertical(pos, false, 0));
+        }
+    for (int ch = 0; ch < 2; ++ch)
+        scratch[scratch_index(xy / 2, true, ch)] = int16_t(vertical(xy / 2, true, ch));
+}
+#else
+void main() {
+    ivec2 xy = ivec2(gl_GlobalInvocationID.xy) * 2;
+    if (xy.x >= p.width || xy.y >= p.height) return;
+    for (int row = 0; row < 2; ++row) {
+        ivec2 a = xy + ivec2(0, row);
+        store_pair(p.dst_y + a.y * p.dst_stride + a.x * (1 + target_wide),
+                   ivec2(filtered(a, false, 0), filtered(a + ivec2(1, 0), false, 0)));
+    }
+    store_pair(p.dst_uv + (xy.y / 2) * p.dst_stride + xy.x * (1 + target_wide),
+               ivec2(filtered(xy / 2, true, 0), filtered(xy / 2, true, 1)));
+}
+
+#endif
