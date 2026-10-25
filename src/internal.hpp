@@ -264,6 +264,7 @@ class Vpp {
 
   private:
     bool vulkan_available();
+    bool use_vulkan(bool overlay);
     void process_single(const VppPicture &picture, const std::shared_ptr<Surface> &target);
 };
 VppPicture vpp_picture(const Buffer &buffer, const std::shared_ptr<Surface> &source,

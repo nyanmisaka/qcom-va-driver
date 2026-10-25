@@ -54,6 +54,11 @@ if have_vulkan_vpp
   vpp_dependencies += [vulkan]
 endif
 summary('Vulkan VPP', have_vulkan_vpp)
+vpp_backend = get_option('vpp_backend')
+if (vpp_backend == 'cdsp' and not have_cdsp_vpp) or (vpp_backend == 'vulkan' and not have_vulkan_vpp)
+  error('The selected vpp_backend must be enabled at build time')
+endif
+vpp_args += ['-DIRIS_VPP_DEFAULT_BACKEND="' + vpp_backend + '"']
 
 sources = files(
   'src/backend.cpp',

@@ -99,7 +99,7 @@ void vpp_caps(VAProcPipelineCaps &caps, bool tone_mapping) {
         caps.num_input_pixel_formats = caps.num_output_pixel_formats = 1;
     }
     caps.min_input_width = caps.min_output_width = 2;
-#ifdef HAVE_CDSP_VPP
+#if defined(HAVE_CDSP_VPP) || defined(HAVE_VULKAN_VPP)
     caps.rotation_flags = (1 << VA_ROTATION_NONE) | (1 << VA_ROTATION_90) | (1 << VA_ROTATION_180) |
                           (1 << VA_ROTATION_270);
 #endif
@@ -232,12 +232,6 @@ VppPicture vpp_picture(const Buffer &buffer, const std::shared_ptr<Surface> &sou
               (source->fourcc == VA_FOURCC_NV12 || source->fourcc == VA_FOURCC_P010) &&
               (target.fourcc == VA_FOURCC_NV12 || target.fourcc == VA_FOURCC_P010),
           "VPP requires distinct NV12/P010 surfaces", VA_STATUS_ERROR_INVALID_SURFACE);
-#ifndef HAVE_CDSP_VPP
-    check(!picture.rotation && target.width == r.width && target.height == r.height &&
-              (picture.tone_mapping || source->fourcc == target.fourcc),
-          "scaling, rotation and format conversion require CDSP VPP",
-          VA_STATUS_ERROR_UNIMPLEMENTED);
-#endif
     return picture;
 }
 #if defined(HAVE_CDSP_VPP) || defined(HAVE_VULKAN_VPP)
@@ -308,6 +302,7 @@ struct Vpp::Impl {
 #ifdef HAVE_CDSP_VPP
     std::shared_ptr<CdspApi> api;
     cdsp_vpp_context *context = nullptr;
+    bool cdsp_unavailable = false;
     void initialize_cdsp() {
         if (context)
             return;
@@ -318,6 +313,7 @@ struct Vpp::Impl {
             trace("CDSP VPP initialization failed: %d", e);
             throw Error(VA_STATUS_ERROR_OPERATION_FAILED, "CDSP VPP initialization failed");
         }
+        cdsp_unavailable = false;
     }
     ~Impl() {
         if (context)
@@ -341,6 +337,42 @@ bool Vpp::vulkan_available() {
 #else
     return false;
 #endif
+}
+bool Vpp::use_vulkan(bool overlay) {
+    const char *requested = overlay ? std::getenv("IRIS_VAAPI_OVERLAY") : nullptr;
+    if (!requested)
+        requested = std::getenv("IRIS_VAAPI_VPP");
+    if (!requested)
+        requested = IRIS_VPP_DEFAULT_BACKEND;
+    check(!std::strcmp(requested, "auto") || !std::strcmp(requested, "cdsp") ||
+              !std::strcmp(requested, "vulkan"),
+          "VPP backend must be auto, cdsp or vulkan", VA_STATUS_ERROR_INVALID_PARAMETER);
+    bool automatic = !std::strcmp(requested, "auto");
+    if (!std::strcmp(requested, "vulkan") || (automatic && overlay)) {
+        if (vulkan_available())
+            return true;
+        check(automatic, "Vulkan VPP unavailable", VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT);
+    }
+#ifdef HAVE_CDSP_VPP
+    if (automatic) {
+        if (!impl_->cdsp_unavailable) {
+            try {
+                impl_->initialize_cdsp();
+                return false;
+            } catch (const Error &error) {
+                impl_->cdsp_unavailable = true;
+                trace("CDSP VPP unavailable: %s", error.what());
+            }
+        }
+    } else {
+        impl_->initialize_cdsp();
+        return false;
+    }
+#else
+    check(automatic, "CDSP VPP was disabled at build time", VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT);
+#endif
+    check(vulkan_available(), "No VPP backend available", VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT);
+    return true;
 }
 bool Vpp::tone_mapping_supported() {
     return vulkan_available();
@@ -386,6 +418,16 @@ void Vpp::process_single(const VppPicture &picture, const std::shared_ptr<Surfac
         region.x = region.y = 0;
     }
 #endif
+    if (use_vulkan(false)) {
+#ifdef HAVE_VULKAN_VPP
+        auto transform = picture;
+        transform.source = source;
+        transform.region = region;
+        impl_->vulkan->transform(transform, *target);
+        target->status = VA_STATUS_SUCCESS;
+        return;
+#endif
+    }
 #ifdef HAVE_CDSP_VPP
     impl_->initialize_cdsp();
     auto in = import_vpp_frame(*source->memory, *source, impl_->api),
@@ -507,35 +549,10 @@ void Vpp::process(const std::vector<VppPicture> &pictures, const std::shared_ptr
         params.push_back(overlay_parameters(pictures[i], direct && i == 1 ? *base : *target,
                                             *target, background));
     if (pictures.size() == 1) {
-#ifdef HAVE_CDSP_VPP
         process_single(background, target);
-#else
-        if (background.tone_mapping)
-            process_single(background, target);
-        else {
-            check(direct && vulkan_available(), "Vulkan copy unavailable",
-                  VA_STATUS_ERROR_UNIMPLEMENTED);
-            impl_->vulkan->transform(background, *target);
-        }
-#endif
         return;
     }
-    const char *requested = std::getenv("IRIS_VAAPI_OVERLAY");
-    check(!requested || !std::strcmp(requested, "auto") || !std::strcmp(requested, "cdsp") ||
-              !std::strcmp(requested, "vulkan"),
-          "IRIS_VAAPI_OVERLAY must be auto, cdsp or vulkan", VA_STATUS_ERROR_INVALID_PARAMETER);
-    bool gpu = false;
-#ifdef HAVE_VULKAN_VPP
-    gpu = (!requested || std::strcmp(requested, "cdsp")) && vulkan_available();
-#endif
-    check(!requested || std::strcmp(requested, "vulkan") || gpu, "Vulkan overlay unavailable",
-          VA_STATUS_ERROR_UNIMPLEMENTED);
-#ifndef HAVE_CDSP_VPP
-    check(gpu, "CDSP overlay was disabled at build time", VA_STATUS_ERROR_UNIMPLEMENTED);
-#else
-    if (!gpu)
-        impl_->initialize_cdsp();
-#endif
+    bool gpu = use_vulkan(true);
     if (!direct) {
         process_single(background, target);
         base = target;

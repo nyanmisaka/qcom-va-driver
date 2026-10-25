@@ -20,9 +20,9 @@ providing hardware decoding and encoding on **SC8280XP**, tested on
 - Compatible DMA-BUF paths avoid raw-frame copies; cached surfaces may need
   GPU or CPU copying. PRIME1/PRIME2 import accepts single-buffer linear
   NV12/P010/BGRA/RGBA; export uses PRIME2.
-- Optional CDSP VPP: NV12/P010 scaling, cropping, rotation and bit-depth
-  conversion with persistent DMA-BUF mappings and no CPU pixel copies.
-- Optional Vulkan VPP: HDR10 P010 to SDR NV12 tone mapping with DMA-BUF zero-copy.
+- Optional CDSP/Vulkan VPP: NV12/P010 scaling, cropping, rotation, bit-depth
+  conversion and RGB overlays with DMA-BUF zero-copy.
+- Vulkan also supports HDR10 P010 to SDR NV12 tone mapping.
 - Identified decode errors produce gray frames with the Iris error-timestamp
   patch below; stalls remain errors.
 
@@ -94,12 +94,19 @@ Meson downloads pinned QAIC and Hexagon Open Access **19.0.02**, using system
 FastRPC or a source fallback. No full SDK is needed. Arch packaging enables CDSP;
 Debian disables it. See [CDSP build and runtime requirements](src/cdsp/README.md).
 
-NV12/P010 scaling, conversion and clockwise 90°/180°/270° rotation can be
-combined. Dimensions and crop coordinates must be even, maximum dimension
-8192, reduction up to 20:1, both axes scaling in the same direction after
+Both CDSP and Vulkan support NV12/P010 cropping, scaling, conversion and
+clockwise 90°/180°/270° rotation, including combined operations. Dimensions
+and crop coordinates must be even, maximum dimension 8192, reduction up to
+20:1, both axes scaling in the same direction after
 rotation. Color matrix/range is preserved; the base layer fills the output.
-No mirroring or interlacing. Active workers follow the available HVX count,
+No mirroring or interlacing. CDSP workers follow the available HVX count,
 up to eight.
+
+Select `IRIS_VAAPI_VPP=auto|cdsp|vulkan` at runtime or `-Dvpp_backend=...`
+at build time; the environment takes precedence. `auto` prefers CDSP for
+geometry/conversion and Vulkan for overlays, falling back to the available
+backend. `IRIS_VAAPI_OVERLAY` overrides only overlay selection. HDR tone mapping
+always requires Vulkan.
 
 ```sh
 ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
@@ -110,11 +117,10 @@ ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
 ## Vulkan video processing
 
 Use `tonemap_vaapi=format=nv12` for limited-range HDR10 P010 (BT.2020/PQ) to
-SDR NV12 (BT.709). Scaling/rotation also require CDSP.
+SDR NV12 (BT.709). Scaling/rotation can use either backend.
 
 Both backends support `overlay_vaapi`: BGRA/RGBA layers over NV12/P010, including
-crop, bilinear scaling, clipping, global and per-pixel alpha. The default prefers
-Vulkan; `IRIS_VAAPI_OVERLAY=cdsp` or `vulkan` selects a backend. Processing shares
+crop, bilinear scaling, clipping, global and per-pixel alpha. Processing shares
 DMA-BUFs without CPU pixel copies. YUV overlays and luma keying are unsupported.
 
 `-Dvulkan_vpp=enabled` (default: `auto`) requires Vulkan ≥ 1.3 headers/loader

@@ -1,6 +1,7 @@
 option('gpu_copy', type: 'feature', value: 'auto', description: 'Surface copying with EGL, GLES 3.2, and GBM')
 option('cdsp_vpp', type: 'feature', value: 'enabled', description: 'Hardware-accelerated video processing on CDSP')
 option('vulkan_vpp', type: 'feature', value: 'auto', description: 'Hardware-accelerated video processing with Vulkan')
+option('vpp_backend', type: 'combo', choices: ['auto', 'cdsp', 'vulkan'], value: 'auto', description: 'Default backend for video processing')
 option('fastrpc', type: 'combo', choices: ['auto', 'system', 'bundled'], value: 'auto', description: 'FastRPC client for CDSP VPP')
 option('fastrpc_include_dir', type: 'string', value: '/usr/include/fastrpc', description: 'System FastRPC headers')
 option('cdsp_firmware_dir', type: 'string', value: 'lib/dsp/cdsp/qcom-va-driver', description: 'Install directory for the CDSP VPP skeleton')
