@@ -68,7 +68,7 @@ def main():
             assert setup.returncode == 0, f'{name}: see {log.name}'
             subprocess.run(['meson', 'compile', '-C', str(build), '-j', '2'], env=env,
                            stdout=log, stderr=subprocess.STDOUT, check=True)
-        driver = build / 'v4l2_drv_video.so'
+        driver = build / 'qcom_drv_video.so'
         dynamic = subprocess.check_output(['readelf', '-d', str(driver)], text=True)
         needed = re.findall(r'\(NEEDED\).*\[(.*?)\]', dynamic)
         gpu = mode != 'disabled' and not missing

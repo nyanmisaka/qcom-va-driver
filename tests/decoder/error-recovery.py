@@ -33,7 +33,7 @@ def main():
         subprocess.run(['c++', '-Wall', '-Wextra', '-shared', '-fPIC',
                         str(source / 'surface-storage.cpp'), '-ldl', '-pthread',
                         '-o', str(storage_shim)], check=True)
-    env = dict(os.environ, LIBVA_DRIVER_NAME='v4l2',
+    env = dict(os.environ, LIBVA_DRIVER_NAME='qcom',
                LIBVA_DRIVERS_PATH=str(args.driver_dir.resolve()), IRIS_VAAPI_DEBUG='1')
     for key in list(env):
         if key.startswith('IRIS_TEST_') or key == 'LD_PRELOAD':

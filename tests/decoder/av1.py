@@ -59,7 +59,7 @@ def main():
     for key in list(env):
         if key == 'LD_PRELOAD' or key.startswith('V4L2_TEST_'):
             del env[key]
-    env.update(LIBVA_DRIVER_NAME='v4l2', LIBVA_DRIVERS_PATH=str(args.driver_dir.resolve()),
+    env.update(LIBVA_DRIVER_NAME='qcom', LIBVA_DRIVERS_PATH=str(args.driver_dir.resolve()),
                IRIS_VAAPI_DEBUG='1', GST_VA_ALL_DRIVERS='1', GST_DEBUG='2',
                GST_DEBUG_NO_COLOR='1', GST_REGISTRY=str(work / 'registry.bin'))
 

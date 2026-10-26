@@ -20,7 +20,7 @@ also require `ffprobe` and software H.264/HEVC decoding.
 To select an uninstalled driver before running a test:
 
 ```sh
-export LIBVA_DRIVER_NAME=v4l2 LIBVA_DRIVERS_PATH="$PWD/build"
+export LIBVA_DRIVER_NAME=qcom LIBVA_DRIVERS_PATH="$PWD/build"
 ```
 
 The PRIME import test requires `/dev/dma_heap/system`. It checks padded layouts
@@ -86,7 +86,7 @@ enabled, then run on the target (upstream FastRPC kernel ABI):
 c++ -O2 -std=c++17 -rdynamic tests/vpp/scaling.cpp -o build/vpp-scaling \
   $(pkg-config --cflags --libs libva libva-drm libdrm vulkan) -ldl \
   -Lbuild/src/cdsp -liris_vpp
-export LIBVA_DRIVER_NAME=v4l2 LIBVA_DRIVERS_PATH="$PWD/build"
+export LIBVA_DRIVER_NAME=qcom LIBVA_DRIVERS_PATH="$PWD/build"
 export LD_LIBRARY_PATH="$PWD/build/src/cdsp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export ADSP_LIBRARY_PATH="$PWD/build/src/cdsp${ADSP_LIBRARY_PATH:+;$ADSP_LIBRARY_PATH}"
 ./build/vpp-scaling

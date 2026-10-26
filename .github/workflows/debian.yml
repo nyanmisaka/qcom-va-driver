@@ -88,14 +88,14 @@ jobs:
       - name: Install and load the Noble-built driver
         run: |
           apt-get install -y ./artifacts/qcom-va-driver_*.deb
-          test "$(readlink /usr/lib/aarch64-linux-gnu/dri/msm_drv_video.so)" = v4l2_drv_video.so
+          test "$(readlink /usr/lib/aarch64-linux-gnu/dri/msm_drv_video.so)" = qcom_drv_video.so
           cmp packaging/environment/60-libva-v4l2.conf /usr/lib/environment.d/60-libva-v4l2.conf
           cmp packaging/environment/libva-v4l2.sh /etc/profile.d/libva-v4l2.sh
           python3 - <<'PYTHON'
           import ctypes
           import os
           ctypes.CDLL('libva.so.2', mode=os.RTLD_NOW | os.RTLD_GLOBAL)
-          driver = ctypes.CDLL('/usr/lib/aarch64-linux-gnu/dri/msm_drv_video.so', mode=os.RTLD_NOW)
+          driver = ctypes.CDLL('/usr/lib/aarch64-linux-gnu/dri/qcom_drv_video.so', mode=os.RTLD_NOW)
           getattr(driver, '__vaDriverInit_1_0')
           print('Driver loaded and VA-API entry point resolved successfully.')
           PYTHON

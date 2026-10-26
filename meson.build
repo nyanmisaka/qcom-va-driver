@@ -83,7 +83,7 @@ test('Decoder CAPTURE memory budget', capture_pool_test)
 driver_install_dir = get_option('libdir') / 'dri'
 
 shared_library(
-  'v4l2_drv_video',
+  'qcom_drv_video',
   sources + copy_source + vulkan_sources,
   dependencies: [va, drm, threads] + copy_dependencies + vpp_dependencies,
   cpp_args: vpp_args,
@@ -95,10 +95,20 @@ shared_library(
 # libva falls back to the DRM driver name on Qualcomm MSM devices.
 install_symlink(
   'msm_drv_video.so',
-  pointing_to: 'v4l2_drv_video.so',
+  pointing_to: 'qcom_drv_video.so',
   install_dir: driver_install_dir,
   install_tag: 'runtime',
 )
+
+# Driver name used before the project was renamed.
+if get_option('v4l2_symlink')
+  install_symlink(
+    'v4l2_drv_video.so',
+    pointing_to: 'qcom_drv_video.so',
+    install_dir: driver_install_dir,
+    install_tag: 'runtime',
+  )
+endif
 
 if get_option('tests')
   subdir('tests')

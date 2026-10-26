@@ -69,8 +69,10 @@ depends on content and pipeline.
 ## Build and install
 
 The project and distribution package were previously named `libva-v4l2`.
-The `v4l2` driver name, automatic `msm` alias, and existing environment
-configuration filenames are retained for compatibility.
+The driver is installed as `qcom_drv_video.so`, with an automatic `msm` alias.
+The legacy `v4l2` driver name is installed as a compatibility symlink unless
+configured with `-Dv4l2_symlink=false`. Existing environment configuration
+filenames are retained.
 
 On Arch Linux:
 
@@ -176,7 +178,7 @@ ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
 
 | Variable | Purpose |
 | --- | --- |
-| `LIBVA_DRIVER_NAME=v4l2` | Explicitly select this backend. |
+| `LIBVA_DRIVER_NAME=qcom` | Explicitly select this backend. |
 | `LIBVA_DRIVERS_PATH=/path/to/build` | Load an uninstalled build. |
 | `IRIS_VAAPI_DEVICE` / `IRIS_VAAPI_ENCODER_DEVICE` | Override video-device discovery. |
 | `IRIS_VAAPI_COPY=gpu` or `cpu` | Default: GPU when built in, otherwise CPU. Explicit GPU requires GPU-copy support. |
