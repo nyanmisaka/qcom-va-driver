@@ -72,6 +72,10 @@ sources = files(
   'src/vpp.cpp',
 )
 headers = files('src/internal.hpp')
+msm_allocation_test = executable('msm-allocation-test',
+  'tests/vpp/msm-allocation.c', 'src/msm.c',
+  dependencies: drm, c_args: ['-UNDEBUG'], build_by_default: false)
+test('MSM allocation cache modes', msm_allocation_test)
 driver_install_dir = get_option('libdir') / 'dri'
 
 shared_library(

@@ -11,6 +11,7 @@
 #endif
 #if defined(HAVE_CDSP_VPP) || defined(HAVE_VULKAN_VPP)
 #include <climits>
+#include <cerrno>
 #include <fcntl.h>
 #include <linux/dma-heap.h>
 #include <sys/ioctl.h>
@@ -236,7 +237,7 @@ VppPicture vpp_picture(const Buffer &buffer, const std::shared_ptr<Surface> &sou
 }
 #if defined(HAVE_CDSP_VPP) || defined(HAVE_VULKAN_VPP)
 namespace {
-std::shared_ptr<Memory> allocate_vpp_memory(const Surface &surface) {
+std::shared_ptr<Memory> allocate_vpp_memory(int render_fd, const Surface &surface) {
     auto memory = std::make_shared<Memory>();
     memory->origin = MemoryOrigin::DmaHeap;
     memory->width = surface.width;
@@ -247,14 +248,33 @@ std::shared_ptr<Memory> allocate_vpp_memory(const Surface &surface) {
     memory->storage_height = (surface.height + 31) & ~31u;
     memory->size = (size_t(memory->stride) * memory->storage_height * 3 / 2 + 4095) & ~size_t(4095);
     int heap = open("/dev/dma_heap/system", O_RDONLY | O_CLOEXEC);
-    check(heap >= 0, "open system DMA heap", VA_STATUS_ERROR_ALLOCATION_FAILED);
-    dma_heap_allocation_data data{};
-    data.len = memory->size;
-    data.fd_flags = O_RDWR | O_CLOEXEC;
-    int result = ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &data);
-    close(heap);
-    check(result == 0, "allocate VPP DMA-BUF", VA_STATUS_ERROR_ALLOCATION_FAILED);
-    memory->fd = data.fd;
+    const char *heap_operation = "open system DMA heap";
+    int heap_error = errno;
+    if (heap >= 0) {
+        dma_heap_allocation_data data{};
+        data.len = memory->size;
+        data.fd_flags = O_RDWR | O_CLOEXEC;
+        int result = ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &data);
+        heap_error = errno;
+        close(heap);
+        if (result == 0) {
+            memory->fd = data.fd;
+            return memory;
+        }
+        heap_operation = "allocate from system DMA heap";
+    }
+    trace("%s failed (errno=%d); trying coherent MSM GEM", heap_operation, heap_error);
+    // Buffers can cross Vulkan/CDSP backends. WC GEM produces incorrect pixels
+    // on the tested CDSP stack, so do not use the ordinary allocator's WC fallback.
+    memory->fd = irisva_msm_allocate_coherent(render_fd, memory->size);
+    if (memory->fd < 0) {
+        int gem_error = errno;
+        throw Error(VA_STATUS_ERROR_ALLOCATION_FAILED,
+                    std::string(heap_operation) + " failed (errno=" + std::to_string(heap_error) +
+                        "); allocate/export coherent MSM GEM failed (errno=" +
+                        std::to_string(gem_error) + ")");
+    }
+    memory->origin = MemoryOrigin::MsmCoherent;
     return memory;
 }
 #ifdef HAVE_CDSP_VPP
@@ -382,7 +402,7 @@ void Vpp::process_single(const VppPicture &picture, const std::shared_ptr<Surfac
     auto region = picture.region;
     check(source && source->memory, "VPP source has no storage", VA_STATUS_ERROR_INVALID_SURFACE);
     if (!target->memory)
-        target->memory = allocate_vpp_memory(*target);
+        target->memory = allocate_vpp_memory(impl_->render_fd, *target);
     auto &src = *source->memory;
     auto &dst = *target->memory;
     check(dst.origin != MemoryOrigin::Iris, "VPP cannot overwrite decoder reference storage",
@@ -409,7 +429,7 @@ void Vpp::process_single(const VppPicture &picture, const std::shared_ptr<Surfac
             resized->width = region.width;
             resized->height = region.height;
             resized->fourcc = VA_FOURCC_NV12;
-            resized->memory = allocate_vpp_memory(*resized);
+            resized->memory = allocate_vpp_memory(impl_->render_fd, *resized);
             intermediate = std::move(resized);
         }
         // Vulkan and CDSP share this allocation without CPU pixel access.
@@ -526,7 +546,7 @@ OverlayParams overlay_parameters(const VppPicture &layer, const Surface &base,
 void Vpp::process(const std::vector<VppPicture> &pictures, const std::shared_ptr<Surface> &target) {
     check(!pictures.empty(), "missing VPP base layer", VA_STATUS_ERROR_INVALID_PARAMETER);
     if (!target->memory)
-        target->memory = allocate_vpp_memory(*target);
+        target->memory = allocate_vpp_memory(impl_->render_fd, *target);
     check(target->memory->origin != MemoryOrigin::Iris, "VPP cannot overwrite decoder references",
           VA_STATUS_ERROR_INVALID_SURFACE);
     struct stat dst_stat{};

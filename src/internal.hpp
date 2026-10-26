@@ -24,6 +24,7 @@
 #include <type_traits>
 
 extern "C" int irisva_msm_allocate(int drm_fd, uint64_t size, int *coherent);
+extern "C" int irisva_msm_allocate_coherent(int drm_fd, uint64_t size);
 
 namespace irisva {
 inline bool is_rgb(unsigned fourcc) {

@@ -69,9 +69,9 @@ DMA-BUF zero-copy remains usable.
 
 ## CDSP VPP
 
-`meson test -C build --print-errorlogs` checks skeleton selection and HVX
-worker limits without DSP hardware. Build with CDSP enabled, then run on the
-target (upstream FastRPC kernel ABI):
+`meson test -C build --print-errorlogs` checks MSM allocation cache modes,
+skeleton selection and HVX worker limits without hardware. Build with CDSP
+enabled, then run on the target (upstream FastRPC kernel ABI):
 
 ```sh
 c++ -O2 -std=c++17 -rdynamic tests/vpp/scaling.cpp -o build/vpp-scaling \

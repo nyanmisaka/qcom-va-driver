@@ -17,7 +17,8 @@ See [supported inputs and usage](../../README.md).
 - Offline builds: prefill `subprojects/packagecache/` using filenames and
   hashes from `subprojects/*.wrap`, then pass `--wrap-mode=nodownload`.
 - Target: CDSP firmware/runtime libraries, unsigned FastRPC support,
-  `/dev/fastrpc-cdsp`, `/dev/dma_heap/system` and board FastRPC configuration.
+  `/dev/fastrpc-cdsp` and board FastRPC configuration. Buffer allocation uses
+  `/dev/dma_heap/system` with coherent MSM GEM as a fallback.
 
 Every build produces v68/v69/v73/v75/v79/v81 skeletons. The helper detects the
 architecture and loads the exact match; unsupported architectures fail.

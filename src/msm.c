@@ -12,13 +12,13 @@
 #define MSM_BO_CACHED_COHERENT 0x080000
 #endif
 
-int irisva_msm_allocate(int drm_fd, uint64_t size, int *coherent) {
+static int allocate(int drm_fd, uint64_t size, int *coherent, int allow_wc) {
     *coherent = 0;
     struct drm_msm_gem_new allocation = {.size = size, .flags = MSM_BO_CACHED_COHERENT};
     if (drmIoctl(drm_fd, DRM_IOCTL_MSM_GEM_NEW, &allocation) < 0) {
         // Unsupported cache modes return EINVAL. Do not hide allocation or
         // permission failures by retrying with different memory attributes.
-        if (errno != EINVAL && errno != EOPNOTSUPP)
+        if (!allow_wc || (errno != EINVAL && errno != EOPNOTSUPP))
             return -1;
         allocation.flags = MSM_BO_WC;
         if (drmIoctl(drm_fd, DRM_IOCTL_MSM_GEM_NEW, &allocation) < 0)
@@ -39,4 +39,13 @@ int irisva_msm_allocate(int drm_fd, uint64_t size, int *coherent) {
     }
     *coherent = allocation.flags == MSM_BO_CACHED_COHERENT;
     return prime_fd;
+}
+
+int irisva_msm_allocate(int drm_fd, uint64_t size, int *coherent) {
+    return allocate(drm_fd, size, coherent, 1);
+}
+
+int irisva_msm_allocate_coherent(int drm_fd, uint64_t size) {
+    int coherent;
+    return allocate(drm_fd, size, &coherent, 0);
 }

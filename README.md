@@ -124,8 +124,9 @@ crop, bilinear scaling, clipping, global and per-pixel alpha. Processing shares
 DMA-BUFs without CPU pixel copies. YUV overlays and luma keying are unsupported.
 
 `-Dvulkan_vpp=enabled` (default: `auto`) requires Vulkan ≥ 1.3 headers/loader
-and `glslangValidator`. Runtime needs a compatible Vulkan driver and access to
-`/dev/dma_heap/system`; tested with Mesa Turnip on Adreno 690.
+and `glslangValidator`. Runtime needs a compatible Vulkan driver; tested with
+Mesa Turnip on Adreno 690. Both VPP backends use `/dev/dma_heap/system`, falling
+back to coherent MSM GEM on failure, never write-combined GEM.
 
 ## Usage
 
