@@ -45,10 +45,23 @@ jobs:
       - name: Inspect packages
         run: |
           lintian --fail-on error artifacts/*.changes
-          dpkg-deb --contents artifacts/libva-v4l2_*.deb
+          dpkg-deb --contents artifacts/qcom-va-driver_*.deb
+      - name: Generate Radxa repository configuration
+        shell: python3 {0}
+        run: |
+          import json
+          from pathlib import Path
+
+          releases = [
+              f'sc8280xp-{suite}{suffix}'
+              for suite in ('trixie', 'noble', 'resolute')
+              for suffix in ('', '-test')
+          ]
+          Path('artifacts/pkg.conf').write_text(
+              json.dumps({'*': {'Releases': releases}}, indent=2) + '\n')
       - uses: actions/upload-artifact@v4
         with:
-          name: libva-v4l2-arm64
+          name: qcom-va-driver-arm64
           path: artifacts/*
           if-no-files-found: error
 
@@ -70,11 +83,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: libva-v4l2-arm64
+          name: qcom-va-driver-arm64
           path: artifacts
       - name: Install and load the Noble-built driver
         run: |
-          apt-get install -y ./artifacts/libva-v4l2_*.deb
+          apt-get install -y ./artifacts/qcom-va-driver_*.deb
           test "$(readlink /usr/lib/aarch64-linux-gnu/dri/msm_drv_video.so)" = v4l2_drv_video.so
           cmp packaging/environment/60-libva-v4l2.conf /usr/lib/environment.d/60-libva-v4l2.conf
           cmp packaging/environment/libva-v4l2.sh /etc/profile.d/libva-v4l2.sh
@@ -96,7 +109,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: libva-v4l2-arm64
+          name: qcom-va-driver-arm64
           path: artifacts
       - uses: softprops/action-gh-release@v2
         with:

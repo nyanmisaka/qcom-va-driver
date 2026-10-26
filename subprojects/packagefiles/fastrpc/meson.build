@@ -56,6 +56,6 @@ rpc = shared_library('iris_cdsprpc',
            '-DMACHINE_NAME_PATH="/sys/firmware/devicetree/base/model"',
            '-DDEFAULT_DSP_SEARCH_PATHS=";/usr/lib/rfsa/adsp;/usr/lib/dsp;"'],
   override_options: ['werror=false'],
-  install: true, install_dir: get_option('libdir') / 'libva-v4l2')
+  install: true, install_dir: get_option('libdir') / 'qcom-va-driver')
 fastrpc_dep = declare_dependency(link_with: rpc, include_directories: fastrpc_includes)
-install_data('LICENSE.txt', install_dir: get_option('datadir') / 'licenses/libva-v4l2/fastrpc')
+install_data('LICENSE.txt', install_dir: get_option('datadir') / 'licenses/qcom-va-driver/fastrpc')

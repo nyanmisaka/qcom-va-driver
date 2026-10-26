@@ -25,7 +25,7 @@ __pycache__/
 # Debian packaging artifacts.
 /obj-*/
 /debian/.debhelper/
-/debian/libva-v4l2/
+/debian/qcom-va-driver/
 /debian/*.debhelper
 /debian/*.substvars
 /debian/files

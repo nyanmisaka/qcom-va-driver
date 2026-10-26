@@ -141,7 +141,7 @@ struct VulkanVpp::Impl : std::enable_shared_from_this<Impl> {
     void initialize(dev_t render_device) {
         VkApplicationInfo application{};
         application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        application.pApplicationName = "libva-v4l2";
+        application.pApplicationName = "qcom-va-driver";
         application.apiVersion = VK_API_VERSION_1_1;
         VkInstanceCreateInfo instance_info{};
         instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

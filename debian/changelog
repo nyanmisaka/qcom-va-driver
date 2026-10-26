@@ -1,3 +1,20 @@
+qcom-va-driver (1.1.0-1) unstable; urgency=medium
+
+  * Rename the project and package to qcom-va-driver, replacing libva-v4l2
+    without a transitional package and preserving driver names and session
+    configuration paths.
+  * Add AV1 Main 8/10-bit decoding on supported Iris devices.
+  * Fix HEVC Main10 format handling, Chromium PRIME1 surface imports and
+    decoder error recovery; bound CAPTURE buffer memory usage.
+  * Replace FastCV with selectable CDSP/Vulkan video processing for scaling,
+    cropping, rotation, NV12/P010 conversion and RGB overlay composition.
+  * Add Vulkan HDR10-to-SDR tone mapping. Enable Vulkan video processing in
+    Debian packages while keeping CDSP disabled.
+  * Make GPU surface copying optional and improve VPP allocation fallback.
+  * Generate pkg.conf for SC8280XP release and test repositories in CI.
+
+ -- Xilin Wu <sophon@radxa.com>  Mon, 26 Oct 2026 20:50:01 +0800
+
 libva-v4l2 (1.0.0-1) unstable; urgency=medium
 
   * Release 1.0.0.

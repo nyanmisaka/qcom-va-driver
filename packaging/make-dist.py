@@ -27,7 +27,7 @@ def main():
     ap.parse_args()
     root = Path(__file__).resolve().parent.parent
     version = re.search(r"version:\s*'([^']+)'", (root / 'meson.build').read_text())[1]
-    name = 'libva-v4l2-' + version
+    name = 'qcom-va-driver-' + version
     paths = [root / p for p in ('meson.build', 'meson_options.txt', 'LICENSE', 'README.md', '.clang-format', '.editorconfig')]
     for directory in ('src', 'patches', 'tests'):
         paths += [p for p in (root / directory).rglob('*') if p.is_file()

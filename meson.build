@@ -1,6 +1,6 @@
 project(
-  'libva-v4l2', 'cpp', 'c',
-  version: '1.0.0',
+  'qcom-va-driver', 'cpp', 'c',
+  version: '1.1.0',
   meson_version: '>=0.61.0',
   license: 'MIT',
   default_options: ['cpp_std=c++17', 'warning_level=2'],
@@ -38,7 +38,7 @@ endif
 if have_cdsp_vpp
   subdir('src/cdsp')
   vpp_args = ['-DHAVE_CDSP_VPP', '-DIRIS_VPP_CLIENT_PATH="' +
-              (get_option('prefix') / get_option('libdir') / 'libva-v4l2/libiris_vpp.so') + '"']
+              (get_option('prefix') / get_option('libdir') / 'qcom-va-driver/libiris_vpp.so') + '"']
   vpp_dependencies = [meson.get_compiler('cpp').find_library('dl')]
 endif
 summary('CDSP VPP', have_cdsp_vpp)

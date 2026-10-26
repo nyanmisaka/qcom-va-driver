@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: MIT
 # Local source snapshot: python packaging/make-dist.py
-pkgname=libva-v4l2
-pkgver=1.0.0
+pkgname=qcom-va-driver
+pkgver=1.1.0
 pkgrel=1
 pkgdesc='VA-API backend for Qualcomm Iris stateful V4L2 M2M decoding and H.264/HEVC encoding'
 arch=('aarch64')
+url='https://github.com/radxa-pkg/qcom-va-driver'
+provides=("libva-v4l2=$pkgver")
+conflicts=('libva-v4l2')
+replaces=('libva-v4l2')
 license=('MIT' 'GPL-2.0-only') # backend MIT; bundled Linux patch GPL-2.0-only
 depends=('glibc' 'gcc-libs' 'libva' 'libdrm' 'mesa' 'libglvnd' 'qcom-fastrpc' 'vulkan-icd-loader' 'vulkan-freedreno')
 makedepends=('meson' 'ninja' 'ghc' 'haskell-syb' 'vulkan-headers' 'glslang')

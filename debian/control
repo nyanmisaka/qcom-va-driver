@@ -1,4 +1,4 @@
-Source: libva-v4l2
+Source: qcom-va-driver
 Section: video
 Priority: optional
 Maintainer: Xilin Wu <sophon@radxa.com>
@@ -7,15 +7,17 @@ Build-Depends: debhelper-compat (= 13), meson (>= 0.61), ninja-build, pkg-config
  glslang-tools
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
-Homepage: https://github.com/strongtz/libva-v4l2
-Vcs-Git: https://github.com/strongtz/libva-v4l2.git
-Vcs-Browser: https://github.com/strongtz/libva-v4l2
+Homepage: https://github.com/radxa-pkg/qcom-va-driver
+Vcs-Git: https://github.com/radxa-pkg/qcom-va-driver.git
+Vcs-Browser: https://github.com/radxa-pkg/qcom-va-driver
 
-Package: libva-v4l2
+Package: qcom-va-driver
 Architecture: arm64
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: mesa-vulkan-drivers
 Provides: va-driver
+Breaks: libva-v4l2
+Replaces: libva-v4l2
 Description: VA-API backend for Qualcomm Iris stateful V4L2 devices
  Hardware video decoding and H.264/HEVC encoding through the Qualcomm Iris
  stateful V4L2 M2M interface. This experimental driver targets SC8280XP,

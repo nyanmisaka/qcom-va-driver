@@ -66,7 +66,7 @@ vpp_client = shared_library('iris_vpp', 'client.cpp', 'skel.cpp', rpc_generated[
   dependencies: [fastrpc_dep, threads],
   c_args: ['-DSTATIC_LIB', '-Wno-unused-parameter', '-Wno-type-limits'],
   cpp_args: skel_args,
-  install: true, install_dir: get_option('libdir') / 'libva-v4l2',
+  install: true, install_dir: get_option('libdir') / 'qcom-va-driver',
   install_rpath: '$ORIGIN')
 
 # Mock only the FastRPC boundary; exercise the production selector without a DSP.

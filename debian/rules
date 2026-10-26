@@ -10,4 +10,4 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 	dh_auto_install
-	rm -rf debian/libva-v4l2/usr/share/licenses
+	rm -rf debian/qcom-va-driver/usr/share/licenses

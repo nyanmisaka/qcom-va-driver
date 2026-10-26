@@ -1,4 +1,4 @@
-# libva-v4l2
+# qcom-va-driver
 
 Experimental VA-API backend for Qualcomm Iris via Linux V4L2 stateful M2M,
 providing hardware decoding and encoding on **SC8280XP**, tested on
@@ -67,6 +67,10 @@ depends on content and pipeline.
   Use `-Dcdsp_vpp=disabled` to skip its dependencies and downloads.
 
 ## Build and install
+
+The project and distribution package were previously named `libva-v4l2`.
+The `v4l2` driver name, automatic `msm` alias, and existing environment
+configuration filenames are retained for compatibility.
 
 On Arch Linux:
 

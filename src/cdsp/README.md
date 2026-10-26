@@ -27,7 +27,7 @@ Default installation with `/usr` prefix:
 
 - Skeletons: `/usr/lib/dsp/cdsp/qcom-va-driver/vpp_v<arch>_skel.so`
   (`-Dcdsp_firmware_dir=...` to override).
-- Host helper and optional private FastRPC library: `libdir/libva-v4l2`.
+- Host helper and optional private FastRPC library: `libdir/qcom-va-driver`.
 
 For uninstalled builds, set `LD_LIBRARY_PATH` and `ADSP_LIBRARY_PATH` to
 `build/src/cdsp`; see [test commands](../../tests/README.md#cdsp-vpp).
