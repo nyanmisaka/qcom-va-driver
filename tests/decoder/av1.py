@@ -70,11 +70,14 @@ def main():
         if result.returncode:
             raise RuntimeError(f'{log.name}: exit {result.returncode}\n{log.read_text()[-6000:]}')
 
-    if args.gstreamer:
+    # Installed copies ship a prebuilt helper; a source checkout compiles it.
+    download = Path(__file__).with_name('av1-download')
+    if args.gstreamer and not download.exists():
+        download = work / 'av1-download'
         flags = shlex.split(subprocess.check_output(
             ['pkg-config', '--cflags', '--libs', 'gstreamer-app-1.0', 'gstreamer-video-1.0'], text=True))
         run(shlex.split(os.environ.get('CXX', 'c++')) + ['-O2', '-Wall', '-Wextra',
-            str(Path(__file__).with_name('av1-download.cpp')), '-o', str(work / 'av1-download')] + flags,
+            str(Path(__file__).with_name('av1-download.cpp')), '-o', str(download)] + flags,
             work / 'build-download.log')
     results = []
     cases = CASES + (EXTENDED_CASES if args.extended else [])
@@ -121,7 +124,7 @@ def main():
                 location = json.dumps(str(video))
                 pipeline = (f'filesrc location={location} ! ivfparse ! av1parse ! vaav1dec ! '
                             f'video/x-raw,format={fmt} ! appsink name=output sync=false')
-                command = [str(work / 'av1-download'), pipeline, str(output)]
+                command = [str(download), pipeline, str(output)]
             run(command, log, timeout=30)
             actual = digest(output)
             expected_size = width * height * 3 // 2 * (2 if depth == 10 else 1) * frames

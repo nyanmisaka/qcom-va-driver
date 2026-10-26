@@ -5,3 +5,4 @@ option('vpp_backend', type: 'combo', choices: ['auto', 'cdsp', 'vulkan'], value:
 option('fastrpc', type: 'combo', choices: ['auto', 'system', 'bundled'], value: 'auto', description: 'FastRPC client for CDSP VPP')
 option('fastrpc_include_dir', type: 'string', value: '/usr/include/fastrpc', description: 'System FastRPC headers')
 option('cdsp_firmware_dir', type: 'string', value: 'lib/dsp/cdsp/qcom-va-driver', description: 'Install directory for the CDSP VPP skeleton')
+option('tests', type: 'boolean', value: false, description: 'Standalone test applications')

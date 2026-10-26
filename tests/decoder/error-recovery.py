@@ -22,13 +22,17 @@ def main():
     root = args.directory.resolve()
     root.mkdir(parents=True, exist_ok=True)
     source = Path(__file__).resolve().parent
-    error_shim = root / 'error-completion.so'
-    storage_shim = root / 'surface-storage.so'
-    subprocess.run(['cc', '-Wall', '-Wextra', '-shared', '-fPIC',
-                    str(source / 'error-completion.c'), '-ldl', '-o', str(error_shim)], check=True)
-    subprocess.run(['c++', '-Wall', '-Wextra', '-shared', '-fPIC',
-                    str(source / 'surface-storage.cpp'), '-ldl', '-pthread',
-                    '-o', str(storage_shim)], check=True)
+    error_shim = source / 'error-completion.so'
+    storage_shim = source / 'surface-storage.so'
+    # Installed copies ship prebuilt shims; a source checkout compiles them.
+    if not error_shim.exists() or not storage_shim.exists():
+        error_shim = root / 'error-completion.so'
+        storage_shim = root / 'surface-storage.so'
+        subprocess.run(['cc', '-Wall', '-Wextra', '-shared', '-fPIC',
+                        str(source / 'error-completion.c'), '-ldl', '-o', str(error_shim)], check=True)
+        subprocess.run(['c++', '-Wall', '-Wextra', '-shared', '-fPIC',
+                        str(source / 'surface-storage.cpp'), '-ldl', '-pthread',
+                        '-o', str(storage_shim)], check=True)
     env = dict(os.environ, LIBVA_DRIVER_NAME='v4l2',
                LIBVA_DRIVERS_PATH=str(args.driver_dir.resolve()), IRIS_VAAPI_DEBUG='1')
     for key in list(env):

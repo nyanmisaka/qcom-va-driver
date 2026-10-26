@@ -100,6 +100,10 @@ install_symlink(
   install_tag: 'runtime',
 )
 
+if get_option('tests')
+  subdir('tests')
+endif
+
 install_data('README.md', install_dir: get_option('datadir') / 'doc' / meson.project_name())
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses' / meson.project_name())
 
