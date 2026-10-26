@@ -194,6 +194,16 @@ std::vector<uint8_t> h264_bitstream(VAProfile profile, const Picture &picture, H
 std::vector<uint8_t> hevc_bitstream(VAProfile profile, const HevcPicture &picture,
                                     HevcState &state);
 
+inline unsigned capture_pool_size(unsigned preferred, unsigned minimum, size_t buffer_size) {
+    check(minimum && minimum <= 64 && buffer_size, "invalid CAPTURE requirements");
+    // Leave room in Iris's DMA address space for internal/reference buffers.
+    // This bounds extra output storage, not total decoder memory usage.
+    constexpr size_t budget = size_t{768} * 1024 * 1024;
+    unsigned limit = std::min(size_t{64}, budget / buffer_size);
+    check(limit >= minimum, "minimum CAPTURE pool exceeds memory budget",
+          VA_STATUS_ERROR_ALLOCATION_FAILED);
+    return std::min(std::max(preferred, minimum), limit);
+}
 class Decoder {
     int fd_ = -1;
     int render_fd_; // Borrowed from the VA display, which outlives the decoder.
@@ -201,7 +211,8 @@ class Decoder {
     std::mutex mutex_;
     bool output_on_ = false, capture_on_ = false;
     bool source_change_ = false, last_ = false;
-    unsigned width_, height_, pool_size_, fourcc_;
+    unsigned width_, height_, preferred_pool_size_, fourcc_;
+    VAStatus failure_ = VA_STATUS_SUCCESS;
     uint64_t next_token_ = 1;
     std::vector<std::shared_ptr<Memory>> output_, capture_;
     std::map<uint64_t, std::shared_ptr<Surface>> pending_;
@@ -211,6 +222,7 @@ class Decoder {
     void pump(int timeout_ms);
     void requeue();
     void recover_picture(uint64_t token);
+    void fail(VAStatus status);
 
   public:
     Decoder(const std::string &device, unsigned width, unsigned height, unsigned surfaces,

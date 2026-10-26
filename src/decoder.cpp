@@ -104,7 +104,7 @@ std::string find_device(bool &av1) {
 Decoder::Decoder(const std::string &device, unsigned width, unsigned height, unsigned surfaces,
                  VAProfile profile, unsigned rt_format, int render_fd)
     : render_fd_(render_fd), width_(width), height_(height),
-      pool_size_(std::min(64u, std::max(32u, surfaces + 4))),
+      preferred_pool_size_(std::min(64u, std::max(32u, surfaces + 4))),
       fourcc_(rt_format == VA_RT_FORMAT_YUV420_10 ? VA_FOURCC_P010 : VA_FOURCC_NV12),
       copier_(render_fd) {
     fd_ = open(device.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -150,6 +150,10 @@ Decoder::Decoder(const std::string &device, unsigned width, unsigned height, uns
 Decoder::~Decoder() {
     if (dump_)
         fclose(dump_);
+    fail(VA_STATUS_ERROR_DECODING_ERROR);
+}
+void Decoder::fail(VAStatus status) {
+    failure_ = status;
     if (fd_ >= 0) {
         unsigned type = OUTPUT;
         if (output_on_)
@@ -158,11 +162,16 @@ Decoder::~Decoder() {
         if (capture_on_)
             call(fd_, VIDIOC_STREAMOFF, &type);
         close(fd_);
+        fd_ = -1;
     }
+    output_on_ = capture_on_ = source_change_ = false;
     for (auto &[token, surface] : pending_) {
-        surface->status = VA_STATUS_ERROR_DECODING_ERROR;
+        surface->status = status;
         surface->pending = false;
     }
+    pending_.clear();
+    capture_.clear();
+    output_.clear();
 }
 void Decoder::allocate(unsigned type, unsigned count, std::vector<std::shared_ptr<Memory>> &pool) {
     v4l2_requestbuffers req{};
@@ -208,13 +217,15 @@ void Decoder::configure_capture() {
     v4l2_control minimum{};
     minimum.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
     checked(fd_, VIDIOC_G_CTRL, &minimum, "G_CTRL minimum capture buffers");
-    // FFmpeg may pass zero render targets and allocate VA surfaces later.
-    // The firmware minimum alone leaves no room for surfaces retained in VA's
-    // reference/reorder queues. Reserve at least 32 slots and honor larger
-    // renderer pools (VLC), within the patched Iris driver's 64-buffer limit.
-    trace("CAPTURE pool target=%u firmware-min=%d", pool_size_, minimum.value);
-    allocate(CAPTURE, std::max(pool_size_, unsigned(minimum.value)), capture_);
-    check(capture_.size() >= pool_size_,
+    // VA clients can retain output in reference/reorder/renderer queues. Treat
+    // their pool sizes as hints: at 8K, blindly reserving 32+ buffers can exhaust
+    // Iris's IOVA space before STREAMON allocates the internal buffers.
+    unsigned count = capture_pool_size(preferred_pool_size_, minimum.value,
+                                       fmt.fmt.pix_mp.plane_fmt[0].sizeimage);
+    trace("CAPTURE pool preferred=%u target=%u firmware-min=%d bytes-per-buffer=%u",
+          preferred_pool_size_, count, minimum.value, fmt.fmt.pix_mp.plane_fmt[0].sizeimage);
+    allocate(CAPTURE, count, capture_);
+    check(capture_.size() >= count,
           "CAPTURE pool too small; apply the Iris gen2 capture-pool kernel patch",
           VA_STATUS_ERROR_ALLOCATION_FAILED);
     for (auto &m : capture_) {
@@ -273,6 +284,7 @@ void Decoder::recover_picture(uint64_t token) {
           unsigned(surface->status));
 }
 void Decoder::pump(int timeout_ms) {
+    check(failure_ == VA_STATUS_SUCCESS, "decoder session has failed", failure_);
     requeue();
     if (timeout_ms) {
         pollfd p{fd_, POLLIN | POLLPRI | POLLOUT, 0};
@@ -291,8 +303,19 @@ void Decoder::pump(int timeout_ms) {
         if (event.type == V4L2_EVENT_SOURCE_CHANGE)
             source_change_ = true;
     }
-    if (source_change_ && !capture_on_)
-        configure_capture();
+    if (source_change_ && !capture_on_) {
+        try {
+            configure_capture();
+        } catch (const Error &e) {
+            // STREAMON failure can leave the kernel session unusable. Close it
+            // and complete pending surfaces instead of retrying S_FMT forever.
+            fail(e.status);
+            throw;
+        } catch (...) {
+            fail(VA_STATUS_ERROR_ALLOCATION_FAILED);
+            throw;
+        }
+    }
     for (;;) {
         QueueBuffer q(OUTPUT);
         if (call(fd_, VIDIOC_DQBUF, &q.buffer) < 0) {
@@ -370,9 +393,10 @@ void Decoder::submit(const std::vector<uint8_t> &bytes, const std::shared_ptr<Su
     std::lock_guard<std::mutex> lock(mutex_);
     // VLC allocates its renderer pool before creating the FFmpeg context,
     // which can pass zero render targets to VA. Preserve the allocation hint
-    // on each surface so CAPTURE can cover that pool plus in-flight output.
+    // on each surface as a preference, subject to the CAPTURE memory budget.
     if (!capture_on_)
-        pool_size_ = std::min(64u, std::max(pool_size_, surface->allocation_count + 4));
+        preferred_pool_size_ =
+            std::min(64u, std::max(preferred_pool_size_, surface->allocation_count + 4));
     pump(0);
     auto start = std::chrono::steady_clock::now();
     std::shared_ptr<Memory> slot;
@@ -409,19 +433,26 @@ void Decoder::submit(const std::vector<uint8_t> &bytes, const std::shared_ptr<Su
     pending_[token] = surface;
     trace("submit token=%llu bytes=%zu", (unsigned long long)token, bytes.size());
     if (!capture_on_) {
-        while (!capture_on_) {
-            check(!expired(start), "initial SOURCE_CHANGE timeout", VA_STATUS_ERROR_TIMEDOUT);
-            pump(20);
+        try {
+            while (!capture_on_) {
+                check(!expired(start), "initial SOURCE_CHANGE timeout", VA_STATUS_ERROR_TIMEDOUT);
+                pump(20);
+            }
+        } catch (const Error &e) {
+            fail(e.status);
+            throw;
         }
     }
 }
 void Decoder::refresh() {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (lock.owns_lock())
+    if (lock.owns_lock() && failure_ == VA_STATUS_SUCCESS)
         pump(0);
 }
 void Decoder::finish() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (failure_ != VA_STATUS_SUCCESS)
+        return;
     auto start = std::chrono::steady_clock::now();
     while (!pending_.empty()) {
         check(!expired(start), "pending pictures at context destruction", VA_STATUS_ERROR_TIMEDOUT);

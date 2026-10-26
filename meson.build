@@ -77,6 +77,9 @@ msm_allocation_test = executable('msm-allocation-test',
   'tests/vpp/msm-allocation.c', 'src/msm.c',
   dependencies: drm, c_args: ['-UNDEBUG'], build_by_default: false)
 test('MSM allocation cache modes', msm_allocation_test)
+capture_pool_test = executable('capture-pool-test', 'tests/decoder/capture-pool.cpp',
+  dependencies: [va, drm, threads], cpp_args: ['-UNDEBUG'], build_by_default: false)
+test('Decoder CAPTURE memory budget', capture_pool_test)
 driver_install_dir = get_option('libdir') / 'dri'
 
 shared_library(
