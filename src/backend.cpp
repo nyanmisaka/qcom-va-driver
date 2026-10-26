@@ -86,9 +86,9 @@ template <class F> VAStatus guard(VADriverContextP ctx, F f) noexcept {
     static VAStatus name args {                                                                    \
         return guard(ctx, [&](Driver &d) -> VAStatus { __VA_ARGS__ });                             \
     }
-static bool supported(VAProfile p) {
+static bool supported(const Driver &d, VAProfile p) {
     return p == VAProfileH264ConstrainedBaseline || p == VAProfileH264Main ||
-           p == VAProfileH264High || is_hevc(p) || is_vp9(p);
+           p == VAProfileH264High || is_hevc(p) || is_vp9(p) || (is_av1(p) && d.av1);
 }
 static bool encode_supported(const Driver &d, VAProfile p, VAEntrypoint e) {
     return !d.encoder_device.empty() && e == VAEntrypointEncSlice &&
@@ -147,10 +147,12 @@ static unsigned encode_attribute(VAConfigAttribType type, VAProfile profile) {
     }
 }
 static unsigned profile_format(VAProfile p) {
-    bool is_vp9_2 = p == VAProfileVP9Profile2;
-    // Chromium requires Main10 to be compatible with 8-bit format.
-    // This also applies to future 10-bit profiles other than VP9_2.
-    return is_10bit(p) * VA_RT_FORMAT_YUV420_10 | !is_vp9_2 * VA_RT_FORMAT_YUV420;
+    if (p == VAProfileVP9Profile2)
+        return VA_RT_FORMAT_YUV420_10;
+    // HEVC Main10 and AV1 Main accept both 8-bit and 10-bit surfaces.
+    if (p == VAProfileHEVCMain10 || is_av1(p))
+        return VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_YUV420_10;
+    return VA_RT_FORMAT_YUV420;
 }
 static unsigned render_formats(VAProfile profile, VAEntrypoint entrypoint) {
     return entrypoint == VAEntrypointVideoProc
@@ -158,7 +160,7 @@ static unsigned render_formats(VAProfile profile, VAEntrypoint entrypoint) {
                : profile_format(profile);
 }
 static unsigned profile_fourcc(VAProfile p) {
-    return is_10bit(p) ? VA_FOURCC_P010 : VA_FOURCC_NV12;
+    return is_10bit(p) || is_av1(p) ? VA_FOURCC_P010 : VA_FOURCC_NV12;
 }
 static auto surface(Driver &d, VASurfaceID id) {
     return lookup(d.surfaces, id, VA_STATUS_ERROR_INVALID_SURFACE);
@@ -269,11 +271,12 @@ API(query_profiles, (VADriverContextP ctx, VAProfile *out, int *count), (void)d;
     out[0] = VAProfileH264ConstrainedBaseline; out[1] = VAProfileH264Main;
     out[2] = VAProfileH264High; out[3] = VAProfileHEVCMain; out[4] = VAProfileHEVCMain10;
     out[5] = VAProfileVP9Profile0; out[6] = VAProfileVP9Profile2; *count = 7;
+    if (d.av1) out[(*count)++] = VAProfileAV1Profile0;
     if (vpp_supported(VAProfileNone, VAEntrypointVideoProc)) out[(*count)++] = VAProfileNone;
     return VA_STATUS_SUCCESS;)
 API(query_entrypoints, (VADriverContextP ctx, VAProfile profile, VAEntrypoint *out, int *count),
     (void)d;
-    check(supported(profile) || vpp_supported(profile, VAEntrypointVideoProc),
+    check(supported(d, profile) || vpp_supported(profile, VAEntrypointVideoProc),
           "unsupported profile", VA_STATUS_ERROR_UNSUPPORTED_PROFILE);
     check(out && count, "null entrypoints", VA_STATUS_ERROR_INVALID_PARAMETER);
     out[0] = profile == VAProfileNone ? VAEntrypointVideoProc : VAEntrypointVLD; *count = 1;
@@ -283,9 +286,9 @@ API(
     get_attributes,
     (VADriverContextP ctx, VAProfile profile, VAEntrypoint entry, VAConfigAttrib *attrs, int count),
     (void)d;
-    check(supported(profile) || vpp_supported(profile, VAEntrypointVideoProc),
+    check(supported(d, profile) || vpp_supported(profile, VAEntrypointVideoProc),
           "unsupported profile", VA_STATUS_ERROR_UNSUPPORTED_PROFILE);
-    check((supported(profile) && entry == VAEntrypointVLD) || vpp_supported(profile, entry) ||
+    check((supported(d, profile) && entry == VAEntrypointVLD) || vpp_supported(profile, entry) ||
               encode_supported(d, profile, entry),
           "unsupported entrypoint", VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT);
     for (int i = 0; i < count; ++i) {
@@ -306,6 +309,9 @@ API(
         case VAConfigAttribRTFormat:
             attrs[i].value = profile_format(profile);
             break;
+        case VAConfigAttribDecAV1Features:
+            attrs[i].value = is_av1(profile) ? 0 : VA_ATTRIB_NOT_SUPPORTED;
+            break;
         case VAConfigAttribDecSliceMode:
             attrs[i].value = VA_DEC_SLICE_MODE_NORMAL;
             break;
@@ -321,9 +327,9 @@ API(
     create_config,
     (VADriverContextP ctx, VAProfile p, VAEntrypoint e, VAConfigAttrib *attrs, int count,
      VAConfigID *id),
-    check(supported(p) || vpp_supported(p, VAEntrypointVideoProc), "unsupported profile",
+    check(supported(d, p) || vpp_supported(p, VAEntrypointVideoProc), "unsupported profile",
           VA_STATUS_ERROR_UNSUPPORTED_PROFILE);
-    check((supported(p) && e == VAEntrypointVLD) || vpp_supported(p, e) ||
+    check((supported(d, p) && e == VAEntrypointVLD) || vpp_supported(p, e) ||
               encode_supported(d, p, e),
           "unsupported entrypoint", VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT);
     Config config{p, e, VA_RC_CQP}; check(id, "null config ID", VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -348,6 +354,9 @@ API(
                   "unsupported render format", VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT);
         else if (e == VAEntrypointVLD && attrs[i].type == VAConfigAttribDecSliceMode)
             check(attrs[i].value == VA_DEC_SLICE_MODE_NORMAL, "unsupported slice mode",
+                  VA_STATUS_ERROR_ATTR_NOT_SUPPORTED);
+        else if (e == VAEntrypointVLD && is_av1(p) && attrs[i].type == VAConfigAttribDecAV1Features)
+            check(!attrs[i].value, "AV1 large scale tiles unsupported",
                   VA_STATUS_ERROR_ATTR_NOT_SUPPORTED);
         else
             throw Error(VA_STATUS_ERROR_ATTR_NOT_SUPPORTED, "unsupported config attribute");
@@ -673,14 +682,20 @@ API(
     auto c = context(d, id);
     check(!c->target, "picture already open", VA_STATUS_ERROR_OPERATION_FAILED);
     auto s = surface(d, target);
-    // Main10 permits NV12 and P010. Select the stateful decoder's bit depth
+    // Main10 and AV1 permit NV12 and P010. Select the decoder's bit depth
     // from the first target, including clients that create a context without
     // render targets. Keep it fixed for the lifetime of the decoder.
     if (c->entrypoint == VAEntrypointVLD && c->profile == VAProfileHEVCMain10 && !c->decoder)
         c->internal_profile = s->fourcc == VA_FOURCC_NV12 ? VAProfileHEVCMain : VAProfileHEVCMain10;
+    if (c->entrypoint == VAEntrypointVLD && !c->decoder) {
+        c->decode_fourcc = is_av1(c->profile) ? s->fourcc : profile_fourcc(c->internal_profile);
+        check(c->decode_fourcc == VA_FOURCC_NV12 || c->decode_fourcc == VA_FOURCC_P010,
+              "unsupported decoder surface format", VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT);
+    }
     check(c->entrypoint == VAEntrypointVideoProc
               ? (s->fourcc == VA_FOURCC_NV12 || s->fourcc == VA_FOURCC_P010)
-              : s->fourcc == profile_fourcc(c->internal_profile),
+              : s->fourcc == (c->entrypoint == VAEntrypointVLD ? c->decode_fourcc
+                                                            : profile_fourcc(c->internal_profile)),
           "surface format does not match context", VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT);
     // Defer decoder creation until the target surface format is known.
     if (c->entrypoint == VAEntrypointVLD && !c->decoder) {
@@ -707,7 +722,8 @@ API(
         return VA_STATUS_SUCCESS;
     } if (!s->persistent_export) s->memory.reset();
     s->status = VA_STATUS_SUCCESS; s->decoder = c->decoder; c->target = s; c->picture = Picture{};
-    c->hevc_picture = HevcPicture{}; c->vp9_picture = Vp9Picture{}; return VA_STATUS_SUCCESS;)
+    c->hevc_picture = HevcPicture{}; c->vp9_picture = Vp9Picture{};
+    c->av1_picture = Av1Picture{}; return VA_STATUS_SUCCESS;)
 template <class P> static void render_buffer(P &p, const std::shared_ptr<Buffer> &b) {
     using Parameter = typename std::decay_t<decltype(p.pending_slices)>::value_type;
     using SliceType = typename std::decay_t<decltype(p.slices)>::value_type;
@@ -717,8 +733,8 @@ template <class P> static void render_buffer(P &p, const std::shared_ptr<Buffer>
         std::memcpy(&p.params, b->data.data(), sizeof(p.params));
         p.has_params = true;
     } else if (b->type == VAIQMatrixBufferType) {
-        if constexpr (std::is_same_v<P, Vp9Picture>) {
-            throw Error(VA_STATUS_ERROR_UNSUPPORTED_BUFFERTYPE, "VP9 has no IQ matrix buffer");
+        if constexpr (std::is_same_v<P, Vp9Picture> || std::is_same_v<P, Av1Picture>) {
+            throw Error(VA_STATUS_ERROR_UNSUPPORTED_BUFFERTYPE, "codec has no IQ matrix buffer");
         } else {
             check(b->element_size >= sizeof(p.iq) && b->elements == 1, "invalid IQ matrix",
                   VA_STATUS_ERROR_INVALID_BUFFER);
@@ -745,8 +761,8 @@ template <class P> static void render_buffer(P &p, const std::shared_ptr<Buffer>
             SliceType slice;
             slice.params = s;
             slice.bytes.assign(b->data.begin() + off, b->data.begin() + off + n);
-            if (!std::is_same_v<P, Vp9Picture> && slice.bytes.size() >= 4 && !slice.bytes[0] &&
-                !slice.bytes[1]) {
+            if (!std::is_same_v<P, Vp9Picture> && !std::is_same_v<P, Av1Picture> &&
+                slice.bytes.size() >= 4 && !slice.bytes[0] && !slice.bytes[1]) {
                 unsigned prefix = slice.bytes[2] == 1                      ? 3
                                   : !slice.bytes[2] && slice.bytes[3] == 1 ? 4
                                                                            : 0;
@@ -775,11 +791,33 @@ API(
     render_picture, (VADriverContextP ctx, VAContextID id, VABufferID *ids, int count),
     auto c = context(d, id);
     check(bool(c->target), "no open picture"); try {
+        check(count >= 0 && (!count || ids), "invalid picture buffer list",
+              VA_STATUS_ERROR_INVALID_PARAMETER);
         if (c->entrypoint == VAEntrypointVideoProc)
-            check(!c->vpp_failed && count >= 0 && (!count || ids), "invalid VPP submission",
-                  VA_STATUS_ERROR_INVALID_PARAMETER);
+            check(!c->vpp_failed, "invalid VPP submission", VA_STATUS_ERROR_INVALID_PARAMETER);
+        std::shared_ptr<Buffer> deferred_av1_data;
+        if (c->entrypoint == VAEntrypointVLD && is_av1(c->profile) &&
+            c->av1_picture.pending_slices.empty()) {
+            // Chromium submits one AV1 data buffer before its tile parameters.
+            // Consume it last, but preserve parameter/data pairing when a call
+            // contains multiple data buffers (each has its own slice offsets).
+            for (int i = 0; i < count; ++i) {
+                auto b = buffer(d, ids[i]);
+                if (b->type == VASliceParameterBufferType && !deferred_av1_data)
+                    break;
+                if (b->type != VASliceDataBufferType)
+                    continue;
+                if (deferred_av1_data) {
+                    deferred_av1_data.reset();
+                    break;
+                }
+                deferred_av1_data = b;
+            }
+        }
         for (int i = 0; i < count; ++i) {
             auto b = buffer(d, ids[i]);
+            if (b == deferred_av1_data)
+                continue;
             if (c->entrypoint == VAEntrypointVideoProc) {
                 check(b->context_id == id && b->type == VAProcPipelineParameterBufferType &&
                           b->element_size >= sizeof(VAProcPipelineParameterBuffer) &&
@@ -797,13 +835,17 @@ API(
                 check(b->context_id == id, "encode buffer belongs to another context",
                       VA_STATUS_ERROR_INVALID_BUFFER);
                 render_encode_buffer(c->encode_settings, c->encode_picture, *b);
-            } else if (is_vp9(c->profile))
+            } else if (is_av1(c->profile))
+                render_buffer(c->av1_picture, b);
+            else if (is_vp9(c->profile))
                 render_buffer(c->vp9_picture, b);
             else if (is_hevc(c->profile))
                 render_buffer(c->hevc_picture, b);
             else
                 render_buffer(c->picture, b);
         }
+        if (deferred_av1_data)
+            render_buffer(c->av1_picture, deferred_av1_data);
     } catch (...) {
         if (c->entrypoint == VAEntrypointVideoProc) {
             c->vpp_pictures.clear();
@@ -859,7 +901,19 @@ API(
     } try {
         // Do not cache parameter sets from a rejected picture: the firmware
         // has not received them. Commit only after successful submission.
-        if (is_vp9(c->profile)) {
+        if (is_av1(c->profile)) {
+            check(c->av1_picture.has_params, "AV1 picture parameters missing",
+                  VA_STATUS_ERROR_INVALID_BUFFER);
+            check(surface(d, c->av1_picture.params.current_frame) == target,
+                  "AV1 current frame does not match target", VA_STATUS_ERROR_INVALID_SURFACE);
+            unsigned fourcc = c->av1_picture.params.bit_depth_idx == 1 ? VA_FOURCC_P010 : VA_FOURCC_NV12;
+            check(fourcc == target->fourcc,
+                  "AV1 bit depth does not match target", VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT);
+            auto next_state = c->av1;
+            auto bytes = av1_bitstream(c->av1_picture, next_state, c->width, c->height);
+            c->decoder->submit(bytes, target);
+            c->av1 = std::move(next_state);
+        } else if (is_vp9(c->profile)) {
             auto bytes = vp9_bitstream(c->profile, c->vp9_picture);
             c->decoder->submit(bytes, target);
         } else if (is_hevc(c->profile)) {
@@ -1148,11 +1202,11 @@ extern "C" VAStatus __vaDriverInit_1_0(VADriverContextP ctx) {
     using namespace irisva;
     try {
         auto d = std::make_unique<Driver>();
-        d->device = find_device();
+        d->device = find_device(d->av1);
         d->encoder_device = find_encoder_device();
         ctx->version_major = VA_MAJOR_VERSION;
         ctx->version_minor = VA_MINOR_VERSION;
-        ctx->max_profiles = 8;
+        ctx->max_profiles = 9;
         ctx->max_entrypoints = 2;
         ctx->max_attributes = 16;
         // libva validates nonzero allocation bounds even when queries return no entries.

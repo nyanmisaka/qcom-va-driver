@@ -6,9 +6,11 @@
 #include <va/va_drmcommon.h>
 #include <va/va_dec_hevc.h>
 #include <va/va_dec_vp9.h>
+#include <va/va_dec_av1.h>
 #include <va/va_enc_h264.h>
 #include <va/va_enc_hevc.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <map>
@@ -150,6 +152,9 @@ inline bool is_hevc(VAProfile p) {
 inline bool is_vp9(VAProfile p) {
     return p == VAProfileVP9Profile0 || p == VAProfileVP9Profile2;
 }
+inline bool is_av1(VAProfile p) {
+    return p == VAProfileAV1Profile0;
+}
 inline bool is_10bit(VAProfile p) {
     return p == VAProfileHEVCMain10 || p == VAProfileVP9Profile2;
 }
@@ -163,6 +168,27 @@ struct Vp9Picture {
     std::vector<VASliceParameterBufferVP9> pending_slices;
     std::vector<Vp9Slice> slices;
 };
+struct Av1Slice {
+    VASliceParameterBufferAV1 params{};
+    std::vector<uint8_t> bytes;
+};
+struct Av1Picture {
+    VADecPictureParameterBufferAV1 params{};
+    bool has_params = false;
+    std::vector<VASliceParameterBufferAV1> pending_slices;
+    std::vector<Av1Slice> slices;
+};
+struct Av1Reference {
+    VASurfaceID surface = VA_INVALID_SURFACE;
+    VADecPictureParameterBufferAV1 params{};
+};
+struct Av1State {
+    std::vector<uint8_t> sequence;
+    std::array<Av1Reference, 8> references;
+    std::shared_ptr<const Av1Picture> pending_reference;
+};
+std::vector<uint8_t> av1_bitstream(const Av1Picture &picture, Av1State &state, unsigned width,
+                                  unsigned height);
 std::vector<uint8_t> vp9_bitstream(VAProfile profile, const Vp9Picture &picture);
 std::vector<uint8_t> h264_bitstream(VAProfile profile, const Picture &picture, H264State &state);
 std::vector<uint8_t> hevc_bitstream(VAProfile profile, const HevcPicture &picture,
@@ -195,7 +221,7 @@ class Decoder {
     void finish();
     void refresh();
 };
-std::string find_device();
+std::string find_device(bool &av1);
 std::string find_encoder_device();
 struct EncodePicture {
     VAEncPictureParameterBufferH264 params{};
@@ -274,6 +300,7 @@ struct Context {
     VAProfile profile;
     VAProfile internal_profile;
     unsigned decode_surfaces = 0;
+    unsigned decode_fourcc = VA_FOURCC_NV12;
     VAEntrypoint entrypoint = VAEntrypointVLD;
     unsigned width, height;
     std::shared_ptr<Decoder> decoder;
@@ -289,6 +316,8 @@ struct Context {
     HevcPicture hevc_picture;
     HevcState hevc;
     Vp9Picture vp9_picture;
+    Av1Picture av1_picture;
+    Av1State av1;
 };
 struct Config {
     VAProfile profile;
@@ -298,6 +327,7 @@ struct Config {
 struct Driver {
     std::recursive_mutex mutex;
     std::string device;
+    bool av1 = false;
     std::string encoder_device;
     uint32_t next_id = 1;
     std::map<uint32_t, Config> configs;

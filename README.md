@@ -2,7 +2,8 @@
 
 Experimental VA-API backend for Qualcomm Iris via Linux V4L2 stateful M2M,
 providing hardware decoding and encoding on **SC8280XP**, tested on
-**Radxa Dragon Q8B**. This is not a generic backend for all V4L2 devices.
+**Radxa Dragon Q8B**. AV1 decoding is also tested on **X1E80100**.
+This is not a generic backend for all V4L2 devices.
 
 ## Support
 
@@ -11,9 +12,16 @@ providing hardware decoding and encoding on **SC8280XP**, tested on
 | H.264 / AVC | Constrained Baseline, Main, High (8-bit) | Same profiles (8-bit) |
 | H.265 / HEVC | Main, Main10 (8/10-bit) | Main (8-bit) |
 | VP9 | Profiles 0 and 2 (8/10-bit) | — |
+| AV1 | Main (8/10-bit), when exposed by Iris | — |
 
 - Progressive 4:2:0 video only. Decoding tested with FFmpeg, GStreamer, mpv,
   VLC, Chromium, and Kodi; encoding with FFmpeg, GStreamer and Sunshine.
+- AV1: tested with FFmpeg and GStreamer from 720p to 4K; no film grain or
+  large-scale tiles. Full reference maps can require an extra hidden decode
+  because VA-API omits AV1 reference refresh flags.
+  X1E80100 tested with Iris firmware `vfw-3.1:rel00101` from Windows qcdx8380
+  driver version 31.0.174.0; the older tested firmware had intermittent decoder
+  startup failures, including with direct V4L2.
 - Encoding: CQP/CBR/VBR, even dimensions from 128×128 to 3840×2160, I/P frames
   with one reference; no B frames. I-frame requests produce IDR frames.
   HEVC uses Main tier; Main10 encoding is unsupported.
@@ -50,7 +58,8 @@ depends on content and pipeline.
 - Linux with Qualcomm Iris stateful and MSM DRM drivers, plus access to the
   Iris video devices and DRM render node.
 - Kernel changes in [patches/](patches/), unless already present: decode-order
-  output, larger CAPTURE pools, encoder deblocking controls, and error timestamps.
+  output, larger CAPTURE pools, encoder deblocking controls, error timestamps,
+  and NOSHOW buffer recycling (required for AV1).
 - C++17 compiler, Meson ≥ 0.61, Ninja, pkg-config, libva ≥ 1.10 and libdrm
   development libraries. GPU-copy also requires EGL, GLES 3.2, and GBM.
 - CDSP VPP is enabled by default and requires a Linux ARM64 build machine,

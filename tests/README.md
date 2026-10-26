@@ -6,7 +6,8 @@ also require `ffprobe` and software H.264/HEVC decoding.
 
 | Test | Coverage |
 | --- | --- |
-| `decoder/main10.cpp` | Main10 8/10-bit capability probing, config validation, surface enumeration, and context bit-depth selection. |
+| `decoder/main10.cpp` | HEVC Main10 / AV1 8/10-bit capabilities, config validation, surface enumeration, and context bit-depth selection. |
+| `decoder/av1.py` | FFmpeg/GStreamer AV1 pixels against dav1d: 720p–4K, 8/10-bit, hidden references, tiles, lossless, still pictures, super-resolution and global motion. |
 | `decoder/prime-import.cpp` | PRIME1/PRIME2 NV12/P010 imports, malformed descriptors, shared storage, and caller FD ownership. |
 | `decoder/error-recovery.py` | Corrupt HEVC, queue errors, neutral NV12/P010 pixels, B frames, consecutive errors, DRM mapping, and persistent/imported storage. |
 | `encoder/ffmpeg-smoke.py` | Profiles, rate control, dimensions, frame counts, keyframes, and decoded quality. |
@@ -23,6 +24,12 @@ export LIBVA_DRIVER_NAME=v4l2 LIBVA_DRIVERS_PATH="$PWD/build"
 The PRIME import test requires `/dev/dma_heap/system`. It checks padded layouts
 and nonzero offsets, and verifies that importing and exporting retain the same
 DMA-BUF rather than copying its pixels.
+
+Run AV1 on a board exposing the V4L2 AV1 format, with the NOSHOW kernel patch:
+`python3 tests/decoder/av1.py tmp/av1 --driver-dir build --gstreamer --extended`.
+Requires FFmpeg with libaom/dav1d; `--gstreamer` also needs the `va` plugin and
+GStreamer app/video development libraries. `--extended` adds coding-tool cases
+and requires `aomenc`. Passing decoded files are removed; logs and streams remain.
 
 Run error recovery with `python3 tests/decoder/error-recovery.py tmp/recovery
 --driver-dir build` on a kernel with the error-timestamp patch. It generates

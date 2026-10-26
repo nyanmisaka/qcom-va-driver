@@ -62,6 +62,7 @@ vpp_args += ['-DIRIS_VPP_DEFAULT_BACKEND="' + vpp_backend + '"']
 
 sources = files(
   'src/backend.cpp',
+  'src/av1.cpp',
   'src/decoder.cpp',
   'src/encoder.cpp',
   'src/h264.cpp',

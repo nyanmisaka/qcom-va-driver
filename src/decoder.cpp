@@ -9,6 +9,10 @@
 #include <glob.h>
 #include <cerrno>
 
+#ifndef V4L2_PIX_FMT_AV1
+#define V4L2_PIX_FMT_AV1 v4l2_fourcc('A', 'V', '0', '1')
+#endif
+
 namespace irisva {
 namespace {
 constexpr unsigned OUTPUT = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -56,7 +60,7 @@ uint8_t *Memory::map() {
     }
     return static_cast<uint8_t *>(mapping);
 }
-std::string find_device() {
+std::string find_device(bool &av1) {
     std::vector<std::string> paths;
     if (const char *p = std::getenv("IRIS_VAAPI_DEVICE"))
         paths.push_back(p);
@@ -72,7 +76,7 @@ std::string find_device() {
         if (fd < 0)
             continue;
         v4l2_capability cap{};
-        bool match = false;
+        bool match = false, has_av1 = false;
         if (!call(fd, VIDIOC_QUERYCAP, &cap) &&
             !strcmp(reinterpret_cast<char *>(cap.driver), "iris_driver")) {
             unsigned caps =
@@ -83,13 +87,17 @@ std::string find_device() {
                 while (!call(fd, VIDIOC_ENUM_FMT, &fmt)) {
                     if (fmt.pixelformat == V4L2_PIX_FMT_H264)
                         match = true;
+                    if (fmt.pixelformat == V4L2_PIX_FMT_AV1)
+                        has_av1 = true;
                     ++fmt.index;
                 }
             }
         }
         close(fd);
-        if (match)
+        if (match) {
+            av1 = has_av1;
             return path;
+        }
     }
     throw Error(VA_STATUS_ERROR_OPERATION_FAILED, "no Iris stateful H264 decoder found");
 }
@@ -97,8 +105,7 @@ Decoder::Decoder(const std::string &device, unsigned width, unsigned height, uns
                  VAProfile profile, unsigned rt_format, int render_fd)
     : render_fd_(render_fd), width_(width), height_(height),
       pool_size_(std::min(64u, std::max(32u, surfaces + 4))),
-      fourcc_((is_10bit(profile) && (rt_format == VA_RT_FORMAT_YUV420_10)) ? VA_FOURCC_P010
-                                                                           : VA_FOURCC_NV12),
+      fourcc_(rt_format == VA_RT_FORMAT_YUV420_10 ? VA_FOURCC_P010 : VA_FOURCC_NV12),
       copier_(render_fd) {
     fd_ = open(device.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
     check(fd_ >= 0, "open Iris decoder");
@@ -110,7 +117,8 @@ Decoder::Decoder(const std::string &device, unsigned width, unsigned height, uns
         fmt.type = OUTPUT;
         fmt.fmt.pix_mp.width = width;
         fmt.fmt.pix_mp.height = height;
-        fmt.fmt.pix_mp.pixelformat = is_vp9(profile)    ? V4L2_PIX_FMT_VP9
+        fmt.fmt.pix_mp.pixelformat = is_av1(profile)    ? V4L2_PIX_FMT_AV1
+                                     : is_vp9(profile)  ? V4L2_PIX_FMT_VP9
                                      : is_hevc(profile) ? V4L2_PIX_FMT_HEVC
                                                         : V4L2_PIX_FMT_H264;
         unsigned codec = fmt.fmt.pix_mp.pixelformat;
