@@ -15,8 +15,8 @@ Package: qcom-va-driver
 Architecture: arm64
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: mesa-vulkan-drivers
-Provides: va-driver
-Breaks: libva-v4l2
+Provides: va-driver, libva-v4l2
+Conflicts: libva-v4l2
 Replaces: libva-v4l2
 Description: VA-API backend for Qualcomm Iris stateful V4L2 devices
  Hardware video decoding and H.264/HEVC encoding through the Qualcomm Iris

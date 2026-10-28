@@ -1,6 +1,6 @@
 project(
   'qcom-va-driver', 'cpp', 'c',
-  version: '1.1.0',
+  version: '1.1.1',
   meson_version: '>=0.61.0',
   license: 'MIT',
   default_options: ['cpp_std=c++17', 'warning_level=2'],

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Local source snapshot: python packaging/make-dist.py
 pkgname=qcom-va-driver
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc='VA-API backend for Qualcomm Iris stateful V4L2 M2M decoding and H.264/HEVC encoding'
 arch=('aarch64')

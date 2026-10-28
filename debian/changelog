@@ -1,3 +1,10 @@
+qcom-va-driver (1.1.1-1) unstable; urgency=medium
+
+  * Provide and conflict with libva-v4l2 to support full package replacement
+    while preserving dependencies on the old package name.
+
+ -- Xilin Wu <sophon@radxa.com>  Wed, 28 Oct 2026 11:22:57 +0800
+
 qcom-va-driver (1.1.0-1) unstable; urgency=medium
 
   * Rename the project and package to qcom-va-driver, replacing libva-v4l2
